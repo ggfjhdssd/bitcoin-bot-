@@ -1,6 +1,13 @@
 require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const mongoose = require('mongoose');
+const express = require('express');
+
+// --- Render Keep-Alive Server ---
+const app = express();
+const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Bitcoin Bot is Online!'));
+app.listen(port, () => console.log(`Keep-Alive server running on port ${port}`));
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = String(process.env.ADMIN_ID).trim();
@@ -339,4 +346,4 @@ bot.action('back_to_menu', async (ctx) => {
 });
 
 bot.launch();
-console.log("🚀 Super Admin Bot is running...");
+console.log("🚀 Super Admin Bot is running with Express Keep-Alive...");

@@ -82,11 +82,8 @@
             btn.disabled = true;
 
             const countdown = setInterval(() => {
-                let hours = parseInt(timer / 3600, 10);
-                let minutes = parseInt((timer % 3600) / 60, 10);
                 let seconds = parseInt(timer % 60, 10);
-
-                timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${hours}:${minutes}:${seconds} စောင့်ပါ`;
+                timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${seconds} စက္ကန့် စောင့်ပါ`;
 
                 if (--timer < 0) {
                     clearInterval(countdown);
@@ -100,7 +97,7 @@
         function confirmShowAd() {
             WebApp.showPopup({
                 title: 'ကြော်ငြာကြည့်မည်',
-                message: '၂,၀၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိ (၁၄ စက္ကန့်ကျော်) ကြည့်ပေးပါ။ ကြားထဲမှ ပိတ်လိုက်ပါက ပိုက်ဆံရမည်မဟုတ်ပါ။',
+                message: '၂,၀၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိ (၁၄ စက္ကန့်ကျော်) ကြည့်ပေးပါ။',
                 buttons: [
                     { id: 'cancel', type: 'cancel', text: 'မကြည့်သေးပါ' },
                     { id: 'ok', type: 'default', text: 'ကြည့်မည်' }
@@ -120,16 +117,12 @@
             btn.disabled = true;
 
             try {
-                // ကြော်ငြာစပြတဲ့အချိန်ကို မှတ်မယ်
                 const startTime = Date.now();
-
                 const result = await AdController.show();
-
-                // ကြော်ငြာကြည့်ပြီးချိန်ကို တွက်မယ်
                 const endTime = Date.now();
                 const watchedSeconds = Math.floor((endTime - startTime) / 1000);
 
-                // Adsgram က done ဖြစ်ရမယ် + user ကြည့်တဲ့ကြာချိန်က ၁၄ စက္ကန့်ထက် ကျော်ရမယ်
+                // ၁၄ စက္ကန့်ပြည့်အောင်ကြည့်မှ ပိုက်ဆံပေးမည်
                 if (result && result.done && watchedSeconds >= 14) {
                     localBalance += REWARD_AMOUNT;
                     localStorage.setItem('my_coin_balance', localBalance);
@@ -137,16 +130,15 @@
                     
                     status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၂,၀၀၀ MMK ရရှိပါပြီ။</b>";
                     
-                    const cooldownSeconds = 5400; // ၁ နာရီခွဲ
+                    const cooldownSeconds = 60; // ၁ မိနစ် သို့ ပြောင်းလဲထားသည်
                     localStorage.setItem(TIMER_KEY, Date.now() + (cooldownSeconds * 1000));
                     startTimer(cooldownSeconds);
 
                     WebApp.showAlert("ဂုဏ်ယူပါတယ်! ၂,၀၀၀ MMK ရရှိပါပြီ။");
                 } else {
-                    // ၁၄ စက္ကန့်မပြည့်ခင် ပိတ်လိုက်ရင်
                     btn.disabled = false;
                     status.innerHTML = "<b style='color:orange;'>⚠️ ကြော်ငြာကို အဆုံးထိမကြည့်ရသေးပါ။ (အနည်းဆုံး ၁၄ စက္ကန့် ကြည့်ပေးပါ)</b>";
-                    WebApp.showAlert("ကြော်ငြာကို အဆုံးထိကြည့်မှ ပိုက်ဆံရပါမည်။ ကျေးဇူးပြု၍ ပြန်ကြည့်ပေးပါ။");
+                    WebApp.showAlert("ကြော်ငြာကို အဆုံးထိကြည့်မှ ပိုက်ဆံရပါမည်။");
                 }
             } catch (error) {
                 btn.disabled = false;

@@ -46,11 +46,11 @@
             document.getElementById('balance-value').innerText = "မရပါ";
         }
 
-        // လက်ကျန်ငွေပြရန်
+        // လက်ကျန်ငွေပြရန် (URL အပြည့်အစုံဖြင့် ပြောင်းလဲထားသည်)
         async function updateBalance() {
             if (!userId) return;
             try {
-                const res = await fetch('/get-balance', {
+                const res = await fetch('https://bitcoin-bot-2zmf.onrender.com/get-balance', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: userId })
@@ -64,7 +64,6 @@
             }
         }
 
-        // စတင်ကတည်းက balance ပြရန်
         updateBalance();
 
         function confirmShowAd() {
@@ -94,16 +93,15 @@
             status.innerText = "ခတ္တခနစောင့်ပါ... ကြော်ငြာရှာပေးနေပါသည်။ 🔎";
 
             try {
-                // Adsgram show params ထဲမှာ userId ထည့်ပေးခြင်းက ပိုစိတ်ချရသည်
                 const result = await AdController.show();
 
                 if (result && result.done) {
                     status.innerHTML = "<b>✅ ကြော်ငြာကြည့်ရှုမှု အောင်မြင်သည်။</b><br>ပိုက်ဆံပေါင်းထည့်နေသည်... ⏳";
                     
-                    // Backend သို့ ပိုက်ဆံပေါင်းပေးရန် တောင်းဆိုခြင်း
                     let success = false;
                     try {
-                        const response = await fetch('/reward-user', {
+                        // Reward တောင်းဆိုရာတွင် URL အပြည့်အစုံ အသုံးပြုထားသည်
+                        const response = await fetch('https://bitcoin-bot-2zmf.onrender.com/reward-user', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ userId: userId })

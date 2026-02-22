@@ -56,12 +56,22 @@
         const MIN_WITHDRAW = 100000;
         const TIMER_KEY = 'ad_cooldown_expiry';
 
+        // For timer interval
+        let timerInterval = null;
+
         function displayBalance() {
             document.getElementById('balance-value').innerText = localBalance.toLocaleString();
         }
 
         displayBalance();
         checkExistingTimer();
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+        }
 
         function checkExistingTimer() {
             const expiry = localStorage.getItem(TIMER_KEY);
@@ -79,14 +89,18 @@
             const btn = document.getElementById('ad-button');
             const timerDisplay = document.getElementById('timer-text');
             let timer = duration;
+
+            // Stop any existing timer
+            stopTimer();
+            
             btn.disabled = true;
 
-            const countdown = setInterval(() => {
+            timerInterval = setInterval(() => {
                 let seconds = parseInt(timer % 60, 10);
                 timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${seconds} စက္ကန့် စောင့်ပါ`;
 
                 if (--timer < 0) {
-                    clearInterval(countdown);
+                    stopTimer();
                     timerDisplay.innerText = "";
                     btn.disabled = false;
                     localStorage.removeItem(TIMER_KEY);
@@ -95,6 +109,12 @@
         }
 
         function confirmShowAd() {
+            // Check if timer is active (button disabled) - if yes, don't allow
+            if (document.getElementById('ad-button').disabled) {
+                WebApp.showAlert("ကျေးဇူးပြု၍ timer ပြီးသည်အထိ စောင့်ပါ။");
+                return;
+            }
+
             WebApp.showPopup({
                 title: 'ကြော်ငြာကြည့်မည်',
                 message: '၂,၀၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိ (၁၄ စက္ကန့်ကျော်) ကြည့်ပေးပါ။',
@@ -130,7 +150,7 @@
                     
                     status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၂,၀၀၀ MMK ရရှိပါပြီ။</b>";
                     
-                    const cooldownSeconds = 60; // ၁ မိနစ် သို့ ပြောင်းလဲထားသည်
+                    const cooldownSeconds = 60; // ၁ မိနစ်
                     localStorage.setItem(TIMER_KEY, Date.now() + (cooldownSeconds * 1000));
                     startTimer(cooldownSeconds);
 

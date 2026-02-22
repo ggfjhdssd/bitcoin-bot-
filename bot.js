@@ -18,7 +18,7 @@ app.get('/', (req, res) => {
 // --- 2. Bot Initialization ---
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = String(process.env.ADMIN_ID).trim();
-const LOG_GROUP_ID = process.env.LOG_GROUP_ID;
+const LOG_GROUP_ID = process.env.LOG_GROUP_ID; // ဒီထဲကို user messages နဲ့ withdrawal requests ပို့မယ်
 
 // --- 3. Database Connection ---
 mongoose.connect(process.env.MONGODB_URI)
@@ -40,9 +40,26 @@ const userSchema = new mongoose.Schema({
     isBanned: { type: Boolean, default: false },
     state: { type: String, default: 'none' },
     tempData: { type: Object, default: {} },
-    lastActive: { type: Date, default: Date.now }  // for batch send sorting
+    lastActive: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
+
+// Withdrawal Request Schema (အသစ်)
+const withdrawalSchema = new mongoose.Schema({
+    userId: Number,
+    username: String,
+    phone: String,
+    name: String,
+    amount: Number,
+    nrcFront: String,
+    nrcBack: String,
+    status: { type: String, default: 'pending' }, // pending, approved, rejected
+    createdAt: { type: Date, default: Date.now },
+    reviewedAt: Date,
+    reviewedBy: Number,
+    rejectReason: String
+});
+const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 
 // --- 5. Reward API for Mini App ---
 app.post('/reward-user', async (req, res) => {
@@ -61,6 +78,20 @@ app.post('/reward-user', async (req, res) => {
         res.status(404).send('User not found');
     } catch (error) {
         res.status(500).send('Internal Error');
+    }
+});
+
+app.post('/get-balance', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const user = await User.findOne({ tgId: userId });
+        if (user) {
+            return res.json({ balance: user.balance });
+        }
+        res.json({ balance: 0 });
+    } catch (error) {
+        res.status(500).json({ error: 'Internal Error' });
     }
 });
 
@@ -84,19 +115,6 @@ const isAdmin = (ctx) => String(ctx.from.id) === ADMIN_ID;
 // Global Error Handler
 bot.catch((err, ctx) => {
     console.error(`⚠️ Telegram Error (${ctx.updateType}): ${err.message}`);
-});
-app.post('/get-balance', async (req, res) => {
-    try {
-        const { userId } = req.body;
-        if (!userId) return res.status(400).json({ error: 'User ID required' });
-        const user = await User.findOne({ tgId: userId });
-        if (user) {
-            return res.json({ balance: user.balance });
-        }
-        res.json({ balance: 0 });
-    } catch (error) {
-        res.status(500).json({ error: 'Internal Error' });
-    }
 });
 
 // --- 7. Keyboards ---
@@ -220,21 +238,25 @@ bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
     ctx.reply("📱 ငွေထုတ်ယူမည့် Kpay/Wave ဖုန်းနံပါတ်ကို ပို့ပေးပါ (ဂဏန်းသီးသန့်) 👇").catch(()=>{});
 });
 
-// ==================== ADMIN COMMANDS (အသစ်ထည့်ထားတာများ) ====================
+// ==================== ADMIN COMMANDS (အပြည့်အစုံ) ====================
 
 bot.command('panel', async (ctx) => {
     if (!isAdmin(ctx)) return;
     const total = await User.countDocuments();
-    let msg = `👑 <b>Super Admin Panel</b>\n\n📊 Total Users: ${total}\n\n`;
+    const pendingWithdrawals = await Withdrawal.countDocuments({ status: 'pending' });
+    let msg = `👑 <b>Super Admin Panel</b>\n\n📊 Total Users: ${total}\n⏳ Pending Withdrawals: ${pendingWithdrawals}\n\n`;
     msg += `🔹 <code>/users [page]</code> - စာမျက်နှာအလိုက် user စာရင်း\n`;
     msg += `🔹 <code>/user [user_id]</code> - user အချက်အလက်ကြည့်\n`;
-    msg += `🔹 <code>/add [user_id] [ငွေပမာဏ]</code>\n`;
-    msg += `🔹 <code>/sub [user_id] [ငွေပမာဏ]</code>\n`;
-    msg += `🔹 <code>/ban [user_id]</code>\n`;
-    msg += `🔹 <code>/unban [user_id]</code>\n`;
+    msg += `🔹 <code>/add [user_id] [ငွေပမာဏ]</code> - ငွေတိုး\n`;
+    msg += `🔹 <code>/sub [user_id] [ငွေပမာဏ]</code> - ငွေလျှော့\n`;
+    msg += `🔹 <code>/addref [user_id] [အရေအတွက်]</code> - referral အရေအတွက်တိုး\n`;
+    msg += `🔹 <code>/subref [user_id] [အရေအတွက်]</code> - referral လျှော့\n`;
+    msg += `🔹 <code>/ban [user_id]</code> - ပိတ်ပင်မယ်\n`;
+    msg += `🔹 <code>/unban [user_id]</code> - ပြန်ဖွင့်မယ်\n`;
     msg += `🔹 <code>/send [user_id] [စာသား]</code> - တစ်ဦးချင်းစာပို့\n`;
-    msg += `🔹 <code>/sendbatch [အရေအတွက်(<=50)] [စာသား]</code> - နောက်ဆုံး active users ကို အများဆုံး ၅၀ ဦးထိ batch ပို့\n`;
+    msg += `🔹 <code>/sendbatch [အရေအတွက်(<=50)] [စာသား]</code> - နောက်ဆုံး active users ကို batch ပို့\n`;
     msg += `🔹 <code>/broadcast [စာသား]</code> - အားလုံးကိုပို့ (သတိထားပါ)\n`;
+    msg += `🔹 <code>/withdrawals</code> - ဆိုင်းငံ့ထားသော ငွေထုတ်မှုများ\n`;
     await ctx.reply(msg, { parse_mode: 'HTML' });
 });
 
@@ -288,7 +310,6 @@ bot.command('add', async (ctx) => {
     user.balance += amount;
     await user.save();
     await ctx.reply(`✅ User ${userId} ကို ${amount} ကျပ် ပေါင်းထည့်ပြီးပါပြီ။ လက်ကျန်: ${user.balance}`);
-    // optional: send notification to user
     try { await bot.telegram.sendMessage(userId, `💰 သင့်အကောင့်ထဲသို့ ${amount} ကျပ် ပေါင်းထည့်လိုက်ပါသည်။ လက်ကျန်: ${user.balance}`); } catch(e){}
 });
 
@@ -309,6 +330,39 @@ bot.command('sub', async (ctx) => {
     try { await bot.telegram.sendMessage(userId, `💸 သင့်အကောင့်မှ ${amount} ကျပ် နုတ်ယူလိုက်ပါသည်။ လက်ကျန်: ${user.balance}`); } catch(e){}
 });
 
+// /addref [user_id] [count] - referral count တိုးရန်
+bot.command('addref', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) return ctx.reply("⚠️ /addref [user_id] [အရေအတွက်]");
+    const userId = parseInt(args[1]);
+    const count = parseInt(args[2]);
+    if (isNaN(count) || count <= 0) return ctx.reply("❌ အရေအတွက် မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    user.referralCount += count;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ၏ referral count ကို ${count} တိုးပြီးပါပြီ။ စုစုပေါင်း: ${user.referralCount}`);
+    try { await bot.telegram.sendMessage(userId, `👥 သင့်ရဲ့ referral အရေအတွက် ${count} တိုးလာပါသည်။ စုစုပေါင်း: ${user.referralCount}`); } catch(e){}
+});
+
+// /subref [user_id] [count] - referral count လျှော့ရန်
+bot.command('subref', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) return ctx.reply("⚠️ /subref [user_id] [အရေအတွက်]");
+    const userId = parseInt(args[1]);
+    const count = parseInt(args[2]);
+    if (isNaN(count) || count <= 0) return ctx.reply("❌ အရေအတွက် မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    if (user.referralCount < count) return ctx.reply("❌ User ရဲ့ referral count မလုံလောက်ပါ။");
+    user.referralCount -= count;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ၏ referral count ကို ${count} လျှော့ပြီးပါပြီ။ စုစုပေါင်း: ${user.referralCount}`);
+    try { await bot.telegram.sendMessage(userId, `👥 သင့်ရဲ့ referral အရေအတွက် ${count} လျှော့ချခံရပါသည်။ စုစုပေါင်း: ${user.referralCount}`); } catch(e){}
+});
+
 // /ban [user_id]
 bot.command('ban', async (ctx) => {
     if (!isAdmin(ctx)) return;
@@ -319,7 +373,7 @@ bot.command('ban', async (ctx) => {
     if (!user) return ctx.reply("❌ User not found.");
     if (user.isBanned) return ctx.reply("✅ User already banned.");
     user.isBanned = true;
-    user.state = 'none'; // clear any ongoing state
+    user.state = 'none';
     user.tempData = {};
     await user.save();
     await ctx.reply(`🚫 User ${userId} ကို ban လိုက်ပါပြီ။`);
@@ -378,7 +432,6 @@ bot.command('sendbatch', async (ctx) => {
     const count = parseInt(countStr);
     if (isNaN(count) || count < 1 || count > 50) return ctx.reply("❌ count သည် 1 နှင့် 50 ကြားဖြစ်ရပါမည်။");
     
-    // get last active users (excluding banned)
     const users = await User.find({ isBanned: false }).sort({ lastActive: -1 }).limit(count);
     if (users.length === 0) return ctx.reply("❌ No active users found.");
     
@@ -388,7 +441,6 @@ bot.command('sendbatch', async (ctx) => {
         try {
             await bot.telegram.sendMessage(u.tgId, msgText);
             success++;
-            // delay 1 second to avoid spam
             await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (e) {
             fail++;
@@ -397,7 +449,7 @@ bot.command('sendbatch', async (ctx) => {
     await ctx.reply(`✅ Batch send complete.\n✅ Success: ${success}\n❌ Failed: ${fail}`);
 });
 
-// /broadcast (existing but we keep it)
+// /broadcast
 bot.command('broadcast', async (ctx) => {
     if (!isAdmin(ctx)) return;
     const msgText = ctx.message.text.split('/broadcast ')[1];
@@ -409,7 +461,7 @@ bot.command('broadcast', async (ctx) => {
         try {
             await bot.telegram.sendMessage(u.tgId, msgText);
             success++;
-            await new Promise(resolve => setTimeout(resolve, 50)); // small delay
+            await new Promise(resolve => setTimeout(resolve, 50));
         } catch (e) {
             fail++;
         }
@@ -417,18 +469,132 @@ bot.command('broadcast', async (ctx) => {
     ctx.reply(`✅ Broadcast done.\n✅ Success: ${success}\n❌ Failed: ${fail}`);
 });
 
-// ==================== END ADMIN COMMANDS ====================
+// /withdrawals - ဆိုင်းငံ့ငွေထုတ်မှုများကိုပြရန်
+bot.command('withdrawals', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const pending = await Withdrawal.find({ status: 'pending' }).sort({ createdAt: -1 });
+    if (pending.length === 0) return ctx.reply("✅ ဆိုင်းငံ့ငွေထုတ်မှု မရှိပါ။");
+    let msg = `⏳ **ဆိုင်းငံ့ငွေထုတ်မှုများ** (${pending.length})\n\n`;
+    pending.forEach((w, i) => {
+        msg += `${i+1}. ID: ${w.userId} | ${w.name} | ${w.amount} ကျပ် | ${new Date(w.createdAt).toLocaleString()}\n`;
+    });
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
 
-// --- 11. Global Message Handler (Withdrawal & Wallet) ---
+// ==================== WITHDRAWAL APPROVAL SYSTEM ====================
+
+// ငွေထုတ်ခြင်း step များ (user state)
+// အောက်ပါ message handler မှာ ဆက်လုပ်မယ်
+
+// Admin က approve/reject လုပ်ဖို့ callback buttons
+bot.action(/^approve_withdraw_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const withdrawId = ctx.match[1];
+    const withdrawal = await Withdrawal.findById(withdrawId);
+    if (!withdrawal) return ctx.answerCbQuery("❌ ငွေထုတ်မှုမတွေ့ပါ။");
+    if (withdrawal.status !== 'pending') return ctx.answerCbQuery("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
+
+    // ငွေထုတ်မှုကို approve
+    withdrawal.status = 'approved';
+    withdrawal.reviewedAt = new Date();
+    withdrawal.reviewedBy = ctx.from.id;
+    await withdrawal.save();
+
+    // user ရဲ့ balance ကို လျှော့ပေးမယ် (အရင်က temp လျှော့ပြီးသားလား? ဒီမှာ ပြန်စစ်ရမယ်)
+    // အရင် withdrawal လုပ်တုန်းက balance ကို မလျှော့ထားဘူး။ ဒီမှာ လျှော့မယ်။
+    const user = await User.findOne({ tgId: withdrawal.userId });
+    if (user) {
+        if (user.balance >= withdrawal.amount) {
+            user.balance -= withdrawal.amount;
+            await user.save();
+        } else {
+            // ငွေမလုံလောက်ရင် reject လုပ်သင့်တယ်
+            withdrawal.status = 'rejected';
+            withdrawal.rejectReason = 'လက်ကျန်ငွေမလုံလောက်ပါ။';
+            await withdrawal.save();
+            await ctx.answerCbQuery("❌ User ရဲ့လက်ကျန်မလုံလောက်ပါ။");
+            // Notify user
+            try {
+                await bot.telegram.sendMessage(withdrawal.userId, `❌ သင့်ငွေထုတ်မှု ${withdrawal.amount} ကျပ် ငြင်းပယ်ခံရပါသည်။ အကြောင်းရင်း: လက်ကျန်ငွေမလုံလောက်ပါ။`);
+            } catch (e) {}
+            return;
+        }
+    }
+
+    // Notify user
+    try {
+        await bot.telegram.sendMessage(withdrawal.userId, `✅ သင့်ငွေထုတ်မှု ${withdrawal.amount} ကျပ် အတည်ပြုပြီးပါပြီ။ ငွေလွှဲပေးပါမည်။`);
+    } catch (e) {}
+
+    await ctx.editMessageCaption(`✅ ငွေထုတ်မှု အတည်ပြုပြီးပါပြီ။\nUser: ${withdrawal.userId}\nငွေပမာဏ: ${withdrawal.amount} ကျပ်`, {
+        reply_markup: { inline_keyboard: [] }
+    });
+    await ctx.answerCbQuery("✅ အတည်ပြုပြီးပါပြီ။");
+});
+
+bot.action(/^reject_withdraw_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const withdrawId = ctx.match[1];
+    const withdrawal = await Withdrawal.findById(withdrawId);
+    if (!withdrawal) return ctx.answerCbQuery("❌ ငွေထုတ်မှုမတွေ့ပါ။");
+    if (withdrawal.status !== 'pending') return ctx.answerCbQuery("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
+
+    // Ask for reject reason
+    await ctx.reply("ငြင်းပယ်ရသည့် အကြောင်းရင်းကို ရိုက်ထည့်ပါ။ (ဥပမာ - NRC မှားနေသည်)");
+    // We need to store state for admin to receive reason. We'll use a temporary state in context session? But we don't have session. Instead we can use a simple approach: set a temp data in a global variable? Not good. Better to use a separate collection or just ask in a follow-up message.
+    // For simplicity, we'll set the withdrawal's temp field and then wait for admin's reply.
+    // But we need to handle that. We'll use a simple method: store the withdrawal ID in admin's tempData (but admin is not a user in our DB). We can use a separate in-memory store, but it's not persistent. Let's do a simpler approach: after clicking reject, we ask for reason in a new message, and then admin replies with reason. We'll capture that in message handler.
+
+    // We'll store the withdrawal ID in a temporary global object (not recommended for production but works for now). For production, use a proper session store.
+    // Instead, we'll just send a message and then expect admin to reply with reason, and we'll use a simple flag in admin's state. But admin might not have a user record. We'll store in a Map.
+    if (!global.pendingRejects) global.pendingRejects = new Map();
+    global.pendingRejects.set(ctx.from.id, withdrawId);
+
+    await ctx.answerCbQuery("ကျေးဇူးပြု၍ ငြင်းပယ်ရသည့်အကြောင်းရင်းကို ရိုက်ထည့်ပါ။");
+});
+
+// ==================== GLOBAL MESSAGE HANDLER (Withdrawal, Wallet, Forward to Log Group) ====================
+
+// In-memory store for admin reject reasons (temporary)
+if (!global.pendingRejects) global.pendingRejects = new Map();
+
 bot.on('message', async (ctx) => {
     try {
-        // update lastActive for every message from user
+        // Update last active
         await User.updateOne({ tgId: ctx.from.id }, { lastActive: new Date() });
 
         const user = await User.findOne({ tgId: ctx.from.id });
         if (!user || user.isBanned) return;
 
-        // Wallet Setting
+        // ---------- Handle Admin Reject Reason ----------
+        if (isAdmin(ctx) && global.pendingRejects.has(ctx.from.id)) {
+            const withdrawId = global.pendingRejects.get(ctx.from.id);
+            const reason = ctx.message.text;
+            if (!reason) {
+                return ctx.reply("ကျေးဇူးပြု၍ စာသားဖြင့် အကြောင်းရင်းရိုက်ထည့်ပါ။");
+            }
+            global.pendingRejects.delete(ctx.from.id);
+
+            const withdrawal = await Withdrawal.findById(withdrawId);
+            if (!withdrawal) return ctx.reply("❌ ငွေထုတ်မှုမတွေ့ပါ။");
+            if (withdrawal.status !== 'pending') return ctx.reply("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
+
+            withdrawal.status = 'rejected';
+            withdrawal.reviewedAt = new Date();
+            withdrawal.reviewedBy = ctx.from.id;
+            withdrawal.rejectReason = reason;
+            await withdrawal.save();
+
+            // Notify user
+            try {
+                await bot.telegram.sendMessage(withdrawal.userId, `❌ သင့်ငွေထုတ်မှု ${withdrawal.amount} ကျပ် ငြင်းပယ်ခံရပါသည်။\nအကြောင်းရင်း: ${reason}`);
+            } catch (e) {}
+
+            await ctx.reply(`✅ ငွေထုတ်မှု ငြင်းပယ်ပြီးပါပြီ။\nUser: ${withdrawal.userId}\nအကြောင်းရင်း: ${reason}`);
+            return;
+        }
+
+        // ---------- Wallet Setting ----------
         if (user.state === 'wait_wallet') {
             user.wallet = ctx.message.text;
             user.state = 'none';
@@ -436,7 +602,7 @@ bot.on('message', async (ctx) => {
             return ctx.reply(`✅ Wallet သတ်မှတ်လိုက်ပါပြီ : ${ctx.message.text}`);
         }
 
-        // Withdrawal Process
+        // ---------- Withdrawal Process ----------
         if (user.state === 'withdraw_phone') {
             if (!ctx.message.text || !/^\d+$/.test(ctx.message.text)) return ctx.reply("⚠️ နံပါတ်သီးသန့်သာ ထည့်ပေးပါ။");
             user.tempData = { phone: ctx.message.text };
@@ -465,7 +631,8 @@ bot.on('message', async (ctx) => {
         }
 
         if (user.state === 'withdraw_nrc_front' && ctx.message.photo) {
-            user.tempData = { ...user.tempData, front: ctx.message.photo[ctx.message.photo.length - 1].file_id };
+            const photo = ctx.message.photo[ctx.message.photo.length - 1];
+            user.tempData = { ...user.tempData, front: photo.file_id };
             user.state = 'withdraw_nrc_back';
             user.markModified('tempData');
             await user.save();
@@ -473,21 +640,84 @@ bot.on('message', async (ctx) => {
         }
 
         if (user.state === 'withdraw_nrc_back' && ctx.message.photo) {
-            const backId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+            const photo = ctx.message.photo[ctx.message.photo.length - 1];
             const data = user.tempData;
-            user.balance -= data.amt;
+
+            // Create withdrawal request (pending)
+            const withdrawal = new Withdrawal({
+                userId: user.tgId,
+                username: user.username,
+                phone: data.phone,
+                name: data.name,
+                amount: data.amt,
+                nrcFront: data.front,
+                nrcBack: photo.file_id
+            });
+            await withdrawal.save();
+
+            // Clear user state
             user.state = 'none';
             user.tempData = {};
             await user.save();
 
-            await ctx.reply("✅ ငွေထုတ်ယူမှုအောင်မြင်ပါသည်။ Admin မှ စစ်ဆေးပေးပါမည်။");
-            const adminMsg = `🚨 <b>Withdraw Request</b>\n🆔 ID: ${user.tgId}\n👤 Name: ${data.name}\n📞 Phone: ${data.phone}\n💵 Amt: ${data.amt} MMK`;
+            await ctx.reply("✅ ငွေထုတ်ယူမှု လျှောက်ထားပြီးပါပြီ။ Admin အတည်ပြုချက်ကို စောင့်ဆိုင်းပါ။");
+
+            // Send to admin log group with approve/reject buttons
+            const caption = `🆕 **ငွေထုတ်မှုအသစ်**\n\n` +
+                            `🆔 User ID: ${user.tgId}\n` +
+                            `👤 Name: ${data.name}\n` +
+                            `📞 Phone: ${data.phone}\n` +
+                            `💵 Amount: ${data.amt} ကျပ်\n` +
+                            `🕒 Time: ${new Date().toLocaleString()}`;
+
             try {
-                await bot.telegram.sendMessage(LOG_GROUP_ID, adminMsg, { parse_mode: 'HTML' });
-                await bot.telegram.sendPhoto(LOG_GROUP_ID, data.front, { caption: "NRC Front" });
-                await bot.telegram.sendPhoto(LOG_GROUP_ID, backId, { caption: "NRC Back" });
-            } catch (err) {}
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, data.front, {
+                    caption: caption,
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [
+                            Markup.button.callback('✅ Approve', `approve_withdraw_${withdrawal._id}`),
+                            Markup.button.callback('❌ Reject', `reject_withdraw_${withdrawal._id}`)
+                        ]
+                    ])
+                });
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, photo.file_id, { caption: "NRC အနောက်ဘက်" });
+            } catch (e) {
+                console.error("Failed to send withdrawal to log group:", e);
+                // If failed, maybe inform admin directly?
+            }
+            return;
         }
+
+        // ---------- Forward all other messages to LOG_GROUP_ID ----------
+        // Exclude messages that are part of ongoing state or commands (already handled above)
+        // We forward only if user is not in any state (i.e., state === 'none')
+        if (user.state === 'none') {
+            try {
+                const message = ctx.message;
+                const forwardedMsg = `📨 **User Message Forward**\n\n` +
+                                     `🆔 User ID: ${user.tgId}\n` +
+                                     `👤 Username: ${user.username || 'N/A'}\n` +
+                                     `💬 Message: ${message.text || '(non-text)'}`;
+                if (message.text) {
+                    await bot.telegram.sendMessage(LOG_GROUP_ID, forwardedMsg, { parse_mode: 'Markdown' });
+                } else if (message.photo) {
+                    await bot.telegram.sendPhoto(LOG_GROUP_ID, message.photo[message.photo.length-1].file_id, {
+                        caption: forwardedMsg,
+                        parse_mode: 'Markdown'
+                    });
+                } else if (message.video) {
+                    await bot.telegram.sendVideo(LOG_GROUP_ID, message.video.file_id, { caption: forwardedMsg });
+                } else if (message.document) {
+                    await bot.telegram.sendDocument(LOG_GROUP_ID, message.document.file_id, { caption: forwardedMsg });
+                } else {
+                    await bot.telegram.sendMessage(LOG_GROUP_ID, forwardedMsg);
+                }
+            } catch (e) {
+                console.error("Failed to forward message to log group:", e);
+            }
+        }
+
     } catch (e) { console.error(e); }
 });
 

@@ -2,12 +2,18 @@ require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const mongoose = require('mongoose');
 const express = require('express');
+const path = require('path');
 
 // --- 1. Render Port Binding & Keep-alive Server ---
 const app = express();
 const port = process.env.PORT || 3000;
+
+// JSON parser ကို reward api အတွက် သုံးပါမယ်
+app.use(express.json());
+// index.html ကို Mini App အဖြစ် သုံးနိုင်အောင် static folder သတ်မှတ်ပါမယ်
+app.use(express.static(path.join(__dirname, 'public')));
+
 app.get('/', (req, res) => res.send('Bot is Online!'));
-app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
 // --- 2. Bot Initialization ---
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -37,6 +43,28 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
+// --- New Reward API for Mini App ---
+app.post('/reward-user', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) return res.status(400).send('User ID required');
+        const user = await User.findOne({ tgId: userId });
+        if (user) {
+            user.balance += 500;
+            await user.save();
+            try {
+                await bot.telegram.sendMessage(userId, "💰 ကြော်ငြာကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!");
+            } catch (e) {}
+            return res.json({ success: true, newBalance: user.balance });
+        }
+        res.status(404).send('User not found');
+    } catch (error) {
+        res.status(500).send('Internal Error');
+    }
+});
+
+app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
+
 const CHANNELS = ['@BitCoinMyannmar', '@BitCoinMyan'];
 
 // --- 5. Helpers ---
@@ -59,7 +87,7 @@ bot.catch((err, ctx) => {
     console.error(`⚠️ Telegram Error (${ctx.updateType}): ${err.message}`);
 });
 
-// --- 7. Keyboards (Mini App Button ပေါင်းထည့်ထားသည်) ---
+// --- 7. Keyboards ---
 const mainMenu = Markup.keyboard([
     ['💰 လက်ကျန်ငွေ', '👫 ဖိတ်ခေါ်ရန်'],
     [Markup.button.webApp('💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်', process.env.MINI_APP_URL)],
@@ -254,7 +282,7 @@ bot.command('broadcast', async (ctx) => {
     } catch (e) { console.error(e); }
 });
 
-// --- 11. Message Handler (Phone/Name/NRC Flow - မြန်မာစာမပြင်ဘဲ ထားသည်) ---
+// --- 11. Message Handler ---
 bot.on('message', async (ctx) => {
     try {
         const user = await User.findOne({ tgId: ctx.from.id });
@@ -335,11 +363,10 @@ bot.action('back_to_menu', async (ctx) => {
     } catch (e) { console.error(e); }
 });
 
-// --- 12. Bot Launch (အောက်ဆုံးပိုင်း အပြည့်အစုံ ပြန်ပိတ်ထားသည်) ---
+// --- 12. Bot Launch ---
 bot.launch().then(() => {
     console.log("🚀 Bot is running flawlessly!");
 });
 
-// Graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

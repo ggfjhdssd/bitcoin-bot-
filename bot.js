@@ -4,16 +4,18 @@ const mongoose = require('mongoose');
 const express = require('express');
 const path = require('path');
 
-// --- 1. Render Port Binding & Keep-alive Server ---
+// --- 1. Render Server Setup ---
 const app = express();
 const port = process.env.PORT || 3000;
 
-// JSON parser ကို reward api အတွက် သုံးပါမယ်
 app.use(express.json());
-// index.html ကို Mini App အဖြစ် သုံးနိုင်အောင် static folder သတ်မှတ်ပါမယ်
-app.use(express.static(path.join(__dirname, 'public')));
+// Folder မရှိရင် လက်ရှိ directory က index.html ကို သုံးအောင် လုပ်ထားပါတယ်
+app.use(express.static(__dirname)); 
 
-app.get('/', (req, res) => res.send('Bot is Online!'));
+// Render Link ကို နှိပ်ရင် index.html ပွင့်စေဖို့
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // --- 2. Bot Initialization ---
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -43,7 +45,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// --- New Reward API for Mini App ---
+// --- 5. Reward API for Mini App ---
 app.post('/reward-user', async (req, res) => {
     try {
         const { userId } = req.body;
@@ -53,8 +55,11 @@ app.post('/reward-user', async (req, res) => {
             user.balance += 500;
             await user.save();
             try {
+                // User က bot ကို block ထားရင် error မတက်အောင် catch လုပ်ထားပါတယ်
                 await bot.telegram.sendMessage(userId, "💰 ကြော်ငြာကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!");
-            } catch (e) {}
+            } catch (e) {
+                console.log(`Notification failed: User ${userId} blocked the bot.`);
+            }
             return res.json({ success: true, newBalance: user.balance });
         }
         res.status(404).send('User not found');
@@ -67,7 +72,7 @@ app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
 const CHANNELS = ['@BitCoinMyannmar', '@BitCoinMyan'];
 
-// --- 5. Helpers ---
+// --- Helpers ---
 async function isJoined(ctx) {
     for (const ch of CHANNELS) {
         try {
@@ -82,20 +87,21 @@ async function isJoined(ctx) {
 
 const isAdmin = (ctx) => String(ctx.from.id) === ADMIN_ID;
 
-// --- 6. Global Error Handler ---
+// --- Global Error Handler ---
 bot.catch((err, ctx) => {
     console.error(`⚠️ Telegram Error (${ctx.updateType}): ${err.message}`);
 });
 
-// --- 7. Keyboards ---
+// --- 7. Keyboards (Mini App URL ပြင်ထားသည်) ---
 const mainMenu = Markup.keyboard([
     ['💰 လက်ကျန်ငွေ', '👫 ဖိတ်ခေါ်ရန်'],
+    // process.env.MINI_APP_URL ထဲမှာ Render Link ကိုပဲ ထည့်ပါ (GitHub မထည့်ရ)
     [Markup.button.webApp('💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်', process.env.MINI_APP_URL)],
     ['🗂 Wallet', '🎁 Bonus'],
     ['📤 ငွေထုတ်ယူရန်']
 ]).resize();
 
-// --- 8. Start Command ---
+// --- 8. Commands & Actions ---
 bot.start(async (ctx) => {
     try {
         let user = await User.findOne({ tgId: ctx.from.id });
@@ -107,26 +113,20 @@ bot.start(async (ctx) => {
                 tgId: ctx.from.id, 
                 username: ctx.from.first_name || 'User' 
             });
-            if (refId && refId !== ctx.from.id) {
-                user.referredBy = refId;
-            }
+            if (refId && refId !== ctx.from.id) user.referredBy = refId;
             await user.save();
         }
 
-        if (user.isBanned) {
-            return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
-        }
+        if (user.isBanned) return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
 
-        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel နှစ်ခုကို မJoin ထားရင် \nငွေထုတ်ရမည်မဟုတ်ပါ❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ခုကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel နှစ်ခုကို မJoin ထားရင် \nငွေထုတ်ရမည်မဟုတ်ပါ❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ခုကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်`;
 
         await ctx.reply(msg, Markup.inlineKeyboard([
             [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/BitCoinMyannmar')],
             [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
             [Markup.button.callback('✅ Joined', 'check_join')]
         ])).catch(()=>{});
-    } catch (e) { 
-        console.error("Start Error:", e); 
-    }
+    } catch (e) { console.error(e); }
 });
 
 bot.action('check_join', async (ctx) => {
@@ -134,17 +134,10 @@ bot.action('check_join', async (ctx) => {
         if (await isJoined(ctx)) {
             const user = await User.findOne({ tgId: ctx.from.id });
             if (user && user.referredBy) {
-                const refUser = await User.findOne({ tgId: user.referredBy });
-                if (refUser) {
-                    await User.updateOne({ tgId: user.referredBy }, { 
-                        $inc: { balance: 5000, referralCount: 1 } 
-                    });
-                    try {
-                        await bot.telegram.sendMessage(refUser.tgId, `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!`);
-                    } catch (err) {
-                        console.log("Ref notification failed (user blocked bot)");
-                    }
-                }
+                await User.updateOne({ tgId: user.referredBy }, { $inc: { balance: 5000, referralCount: 1 } });
+                try {
+                    await bot.telegram.sendMessage(user.referredBy, `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!`);
+                } catch (err) {}
                 user.referredBy = null;
                 await user.save();
             }
@@ -153,136 +146,77 @@ bot.action('check_join', async (ctx) => {
         } else {
             await ctx.answerCbQuery("⚠️ Channel (၂) ခုလုံးကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
         }
-    } catch (e) {
-        console.error("Check Join Error:", e);
-    }
+    } catch (e) { console.error(e); }
 });
 
-// --- 9. Main Menu Buttons ---
 bot.hears('💰 လက်ကျန်ငွေ', async (ctx) => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        await ctx.reply(`🙌🏻 အသုံးပြုသူ = ${user.username}\n💰 လက်ကျန်ငွေ = ${user.balance.toLocaleString()} ကျပ်\n\n🪢 ပိုပြီး ရနိုင်ရန် မိတ်ဆွေ ဖိတ်ပါ ✨`).catch(()=>{});
-    } catch (e) { console.error(e); }
+    const user = await User.findOne({ tgId: ctx.from.id });
+    if (user) ctx.reply(`🙌🏻 အသုံးပြုသူ = ${user.username}\n💰 လက်ကျန်ငွေ = ${user.balance.toLocaleString()} ကျပ်\n\n🪢 ပိုပြီး ရနိုင်ရန် မိတ်ဆွေ ဖိတ်ပါ ✨`).catch(()=>{});
 });
 
 bot.hears('👫 ဖိတ်ခေါ်ရန်', async (ctx) => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        const botMe = await bot.telegram.getMe();
-        const refLink = `https://t.me/${botMe.username}?start=${ctx.from.id}`;
-        const shareText = `@bitcoinminingmyanmar_bot Bitcoin Bot !🔥\n\n🎁လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁လူ 10 ယောက်ခေါ် → +50000ကျပ် 🔥\n\nငါ့ရဲ့ Invite Link က ${refLink} ဖြစ်ပါတယ်`;
-
-        const msg = `🙌🏻 သင့်စုစုပေါင်း ဖိတ်ခေါ်ထားသူ = ${user.referralCount} User(s)\n🙌🏻 သင့်ဖိတ်ခေါ်ရန် Link = ${refLink}\n\n🪢 ဖိတ်ခေါ်ပြီး 5000 ကျပ် ရယူနိုင်ပါသည်\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡\n🔋 နေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯 မြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !🔥\n\n🎁လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥သူငယ်ချင်းတွေရဲ့ ဝယ်ယူမှုတိုင်းအတွက် ကော်မရှင် 80% အထိရ\n✅သင့် Wave/KPay ဆီသို့ ငွေတန်းထုတ်နိုင်တယ်\n\n🎯 ငါ့လင့်ကနေ ဝင်ပြီး ဘောနပ် 5000ကျပ် ယူလိုက်ပါ`;
-
-        await ctx.reply(msg, Markup.inlineKeyboard([
-            [Markup.button.callback('👥 ဖိတ်ခေါ်ထားသောသူများ', 'my_refs')],
-            [Markup.button.callback('🏆 Top List', 'top_list')],
-            [Markup.button.switchToChat('🚀 Bot Link ကို Share ပါ', shareText)]
-        ])).catch(()=>{});
-    } catch (e) { console.error(e); }
-});
-
-bot.action('my_refs', async (ctx) => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        const count = user.referralCount;
-        await ctx.reply(count === 0 ? "👤 သင့်ဖိတ်ခေါ်ထားသူ မရှိသေးပါ။" : `👤 သင့်မှာ ဖိတ်ခေါ်ထားသူ ${count} ဦး ရှိပါသည်။`).catch(()=>{});
-        await ctx.answerCbQuery().catch(()=>{});
-    } catch (e) { console.error(e); }
-});
-
-bot.action('top_list', async (ctx) => {
-    try {
-        const topUsers = await User.find().sort({ referralCount: -1 }).limit(10);
-        let text = "🔥 <b>အကောင်းဆုံး Referral Users List</b> 🔥\n\n";
-        topUsers.forEach((u, i) => {
-            text += `${i + 1}. ${u.username || 'User'} : 👨 ${u.referralCount} ယောက်\n`;
-        });
-        await ctx.reply(text, { 
-            parse_mode: 'HTML', 
-            ...Markup.inlineKeyboard([Markup.button.callback('🔙 နောက်သို့', 'back_to_menu')]) 
-        }).catch(()=>{});
-        await ctx.answerCbQuery().catch(()=>{});
-    } catch (e) { console.error(e); }
-});
-
-bot.hears('🗂 Wallet', async (ctx) => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        await ctx.reply(`💡 သင့်လက်ရှိ Wallet နံပါတ်: ${user.wallet}\n\n💹ထို Wallet ကို အနာဂတ်ထုတ်ယူမှုများတွင် အသုံးပြုပါမည်။\n\nကျေးဇူးပြု၍ 💠 Wallet သတ်မှတ် / ပြင်ဆင် 💠 \nနှိပ်ပြီး သင်ငွေထုတ်ယူလိုသော WavePay/Kpay နာမည်နှင့် ဖုန်းနံပါတ်ကို ပို့ပေးပါ😘`, Markup.inlineKeyboard([
-            [Markup.button.callback('💠 Wallet ပြင်ဆင်ပါ', 'set_wallet')]
-        ])).catch(()=>{});
-    } catch (e) { console.error(e); }
-});
-
-bot.action('set_wallet', async (ctx) => {
-    try {
-        await User.updateOne({ tgId: ctx.from.id }, { state: 'wait_wallet' });
-        await ctx.reply("✏️ Now Send Your Kpay/Wave Number and Name To Use It For Future Withdrawals\n\n⚠️ This Wallet Will Be Used For Future Withdrawals !!").catch(()=>{});
-        await ctx.answerCbQuery().catch(()=>{});
-    } catch (e) { console.error(e); }
+    const user = await User.findOne({ tgId: ctx.from.id });
+    const botMe = await bot.telegram.getMe();
+    const refLink = `https://t.me/${botMe.username}?start=${ctx.from.id}`;
+    const shareText = `Bitcoin Bot !🔥 လူ 1 ယောက်ခေါ် +5000ကျပ် \nInvite Link: ${refLink}`;
+    
+    ctx.reply(`🙌🏻 သင့်ဖိတ်ခေါ်ရန် Link = ${refLink}`, Markup.inlineKeyboard([
+        [Markup.button.callback('🏆 Top List', 'top_list')],
+        [Markup.button.switchToChat('🚀 Bot Link ကို Share ပါ', shareText)]
+    ])).catch(()=>{});
 });
 
 bot.hears('🎁 Bonus', async (ctx) => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        const now = new Date();
-        if (user.lastBonus && (now - user.lastBonus < 86400000)) {
-            const diff = 86400000 - (now - user.lastBonus);
-            const hours = Math.floor(diff / 3600000);
-            const mins = Math.floor((diff % 3600000) / 60000);
-            return ctx.reply(`⏳ ခွင့်မပြုသေးပါ! သင် 24 နာရီအတွင်း ဘောနပ်ရယူပြီးသားဖြစ်ပါသည်။\n⏰ ကျန်ရှိချိန်: ${hours} နာရီ ${mins} မိနစ်`).catch(()=>{});
-        }
-        const bonus = Math.floor(Math.random() * (10000 - 500 + 1)) + 500;
-        user.balance += bonus;
-        user.lastBonus = now;
-        await user.save();
-        await ctx.reply(`🎉 မင်္ဂလာပါ! ကံစမ်းမဲ ပေါက်ပါပြီ 🎉\n💰 သင် ${bonus} ကျပ် ရရှိလိုက်ပြီ ဖြစ်ပါသည်။\n🔔 500 ကျပ်မှ 10,000 ကျပ် အထိ ပေါက်နိုင်ပါသည်။\n⏳ 24 နာရီ ပြည့်မြောက်ပြီးနောက် ထပ်မံစမ်းနိုင်ပါသည်။`).catch(()=>{});
-    } catch (e) { console.error(e); }
+    const user = await User.findOne({ tgId: ctx.from.id });
+    const now = new Date();
+    if (user.lastBonus && (now - user.lastBonus < 86400000)) return ctx.reply("⏳ ၂၄ နာရီအတွင်း တစ်ကြိမ်သာ ရနိုင်ပါသည်။").catch(()=>{});
+    
+    const bonus = Math.floor(Math.random() * (1000 - 500 + 1)) + 500;
+    user.balance += bonus;
+    user.lastBonus = now;
+    await user.save();
+    ctx.reply(`🎉 သင် ${bonus} ကျပ် ရရှိလိုက်ပါပြီ!`).catch(()=>{});
+});
+
+bot.hears('🗂 Wallet', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    ctx.reply(`💡 လက်ရှိ Wallet: ${user.wallet}`, Markup.inlineKeyboard([
+        [Markup.button.callback('💠 Wallet ပြင်ဆင်ပါ', 'set_wallet')]
+    ])).catch(()=>{});
+});
+
+bot.action('set_wallet', async (ctx) => {
+    await User.updateOne({ tgId: ctx.from.id }, { state: 'wait_wallet' });
+    ctx.reply("✏️ Kpay/Wave နံပါတ် နှင့် အမည် ပို့ပေးပါ 👇").catch(()=>{});
 });
 
 bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        if (user.balance < 100000) return ctx.reply("⚠ သင်ထုတ်ယူနိုင်ရန်အနည်းဆုံး 100,000 ကျပ် ရှိရပါမည်").catch(()=>{});
-        user.state = 'withdraw_phone';
-        await user.save();
-        await ctx.reply("📱 ငွေထုတ်ယူမည့် Kpay/Wave ဖုန်းနံပါတ်ကို ပို့ပေးပါ (ဂဏန်းသီးသန့်) 👇").catch(()=>{});
-    } catch (e) { console.error(e); }
+    const user = await User.findOne({ tgId: ctx.from.id });
+    if (user.balance < 100000) return ctx.reply("⚠ အနည်းဆုံး 100,000 ကျပ် ရှိရပါမည်").catch(()=>{});
+    user.state = 'withdraw_phone';
+    await user.save();
+    ctx.reply("📱 ငွေထုတ်ယူမည့် Kpay/Wave ဖုန်းနံပါတ် ပို့ပေးပါ 👇").catch(()=>{});
 });
 
-// --- 10. Admin Panel & Broadcast ---
+// --- Admin Commands ---
 bot.command('panel', async (ctx) => {
-    try {
-        if (!isAdmin(ctx)) return;
-        const total = await User.countDocuments();
-        let msg = `👑 <b>Super Admin Panel</b>\n\n📊 Total Users: ${total}\n\n`;
-        msg += `<b>Available Commands:</b>\n`;
-        msg += `🔹 <code>/users [page]</code>\n🔹 <code>/add [ID] [Amt]</code>\n🔹 <code>/sub [ID] [Amt]</code>\n🔹 <code>/broadcast [Msg]</code>`;
-        await ctx.reply(msg, { parse_mode: 'HTML' }).catch(()=>{});
-    } catch (e) { console.error(e); }
+    if (!isAdmin(ctx)) return;
+    const total = await User.countDocuments();
+    ctx.reply(`👑 Admin Panel\n📊 Total Users: ${total}\n/broadcast [စာသား]`).catch(()=>{});
 });
 
 bot.command('broadcast', async (ctx) => {
-    try {
-        if (!isAdmin(ctx)) return;
-        const msgText = ctx.message.text.split('/broadcast ')[1];
-        if (!msgText) return ctx.reply("⚠️ စာသားထည့်ပါ။").catch(()=>{});
-        const users = await User.find();
-        for (const u of users) {
-            try { await bot.telegram.sendMessage(u.tgId, msgText); } catch (e) {}
-        }
-        await ctx.reply("✅ Broadcast Done.").catch(()=>{});
-    } catch (e) { console.error(e); }
+    if (!isAdmin(ctx)) return;
+    const msg = ctx.message.text.split('/broadcast ')[1];
+    if (!msg) return ctx.reply("စာသားထည့်ပါ");
+    const users = await User.find();
+    for (const u of users) {
+        try { await bot.telegram.sendMessage(u.tgId, msg); } catch (e) {}
+    }
+    ctx.reply("✅ ပို့ဆောင်ပြီးပါပြီ").catch(()=>{});
 });
 
-// --- 11. Message Handler ---
+// --- General Message Handler ---
 bot.on('message', async (ctx) => {
     try {
         const user = await User.findOne({ tgId: ctx.from.id });
@@ -292,16 +226,15 @@ bot.on('message', async (ctx) => {
             user.wallet = ctx.message.text;
             user.state = 'none';
             await user.save();
-            return ctx.reply(`💼 သင့် WavePay Kpay လိပ်စာကို အောင်မြင်စွာ သတ်မှတ်လိုက်ပါသည် :-\n${ctx.message.text}`).catch(()=>{});
+            return ctx.reply("✅ Wallet သတ်မှတ်ပြီးပါပြီ").catch(()=>{});
         }
 
         if (user.state === 'withdraw_phone') {
-            if (!/^\d+$/.test(ctx.message.text)) return ctx.reply("⚠️ နံပါတ်သီးသန့်သာ ထည့်သွင်းပေးပါရန်။").catch(()=>{});
-            user.tempData = { ...user.tempData, phone: ctx.message.text };
+            user.tempData = { phone: ctx.message.text };
             user.state = 'withdraw_name';
             user.markModified('tempData');
             await user.save();
-            return ctx.reply("👤 Kpay/Wave အကောင့်နာမည်ကို ပို့ပေးပါ 👇").catch(()=>{});
+            return ctx.reply("👤 အကောင့်နာမည် ပို့ပေးပါ 👇").catch(()=>{});
         }
 
         if (user.state === 'withdraw_name') {
@@ -309,64 +242,42 @@ bot.on('message', async (ctx) => {
             user.state = 'withdraw_amount';
             user.markModified('tempData');
             await user.save();
-            return ctx.reply("💵 ထုတ်ယူလိုသော ပမာဏကို ရိုက်ထည့်ပါ 👇").catch(()=>{});
+            return ctx.reply("💵 ပမာဏ ရိုက်ထည့်ပါ 👇").catch(()=>{});
         }
 
         if (user.state === 'withdraw_amount') {
             const amt = parseInt(ctx.message.text);
-            if (isNaN(amt) || amt < 100000 || amt > user.balance) {
-                return ctx.reply("❌ ပမာဏ မှားယွင်းနေပါသည် (အနည်းဆုံး 100,000 ကျပ်)").catch(()=>{});
-            }
+            if (isNaN(amt) || amt > user.balance) return ctx.reply("❌ ပမာဏ မှားယွင်းနေပါသည်").catch(()=>{});
             user.tempData = { ...user.tempData, amt: amt };
             user.state = 'withdraw_nrc_front';
             user.markModified('tempData');
             await user.save();
-            return ctx.reply("📸 မှတ်ပုံတင် 'အရှေ့ဘက်' ဓာတ်ပုံ ပို့ပေးပါ 👇").catch(()=>{});
+            return ctx.reply("📸 မှတ်ပုံတင် အရှေ့ပုံ ပို့ပေးပါ 👇").catch(()=>{});
         }
 
         if (user.state === 'withdraw_nrc_front' && ctx.message.photo) {
-            user.tempData = { 
-                ...user.tempData, 
-                front: ctx.message.photo[ctx.message.photo.length - 1].file_id 
-            };
+            user.tempData = { ...user.tempData, front: ctx.message.photo[ctx.message.photo.length - 1].file_id };
             user.state = 'withdraw_nrc_back';
             user.markModified('tempData');
             await user.save();
-            return ctx.reply("📸 မှတ်ပုံတင် 'အနောက်ဘက်' ဓာတ်ပုံ ပို့ပေးပါ 👇").catch(()=>{});
+            return ctx.reply("📸 မှတ်ပုံတင် အနောက်ပုံ ပို့ပေးပါ 👇").catch(()=>{});
         }
 
         if (user.state === 'withdraw_nrc_back' && ctx.message.photo) {
             const backId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
             const data = user.tempData;
-
             user.balance -= data.amt;
             user.state = 'none';
             user.tempData = {};
             await user.save();
-
-            await ctx.reply("✅ မိတ်ဆွေရဲ့ပိုက်ဆံထုတ်ခြင်းအောင်မြင်ပါသည် မိတ်ဆွေရဲ့ငွေထုတ်စဉ်နံပါတ်ကို Admin ထံ ပို့ထားပါသည် ✨").catch(()=>{});
-
+            ctx.reply("✅ ငွေထုတ်ယူမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေးပေးပါမည်။").catch(()=>{});
             try {
-                const adminMsg = `🚨 <b>Withdrawal Request</b>\n🆔 ID: <code>${user.tgId}</code>\n👤 Name: ${data.name}\n📞 Phone: ${data.phone}\n💵 Amt: ${data.amt} MMK\n💳 Wallet: ${user.wallet}`;
-                await bot.telegram.sendMessage(LOG_GROUP_ID, adminMsg, { parse_mode: 'HTML' });
-                await bot.telegram.sendPhoto(LOG_GROUP_ID, data.front, { caption: "NRC Front" });
-                await bot.telegram.sendPhoto(LOG_GROUP_ID, backId, { caption: "NRC Back" });
+                await bot.telegram.sendMessage(LOG_GROUP_ID, `🚨 Withdraw: ${data.amt} MMK\nID: ${user.tgId}\nPhone: ${data.phone}`);
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, data.front);
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, backId);
             } catch (err) {}
         }
     } catch (e) { console.error(e); }
 });
 
-bot.action('back_to_menu', async (ctx) => {
-    try {
-        try { await ctx.deleteMessage(); } catch (e) {}
-        await ctx.reply("🏡 မင်္ဂလာပါ! Main Menu မှာ ရွေးချယ်ပါ ✨", mainMenu).catch(()=>{});
-    } catch (e) { console.error(e); }
-});
-
-// --- 12. Bot Launch ---
-bot.launch().then(() => {
-    console.log("🚀 Bot is running flawlessly!");
-});
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+bot.launch().then(() => console.log("🚀 Bot is Live!"));

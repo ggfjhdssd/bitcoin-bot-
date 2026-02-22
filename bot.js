@@ -85,6 +85,19 @@ const isAdmin = (ctx) => String(ctx.from.id) === ADMIN_ID;
 bot.catch((err, ctx) => {
     console.error(`⚠️ Telegram Error (${ctx.updateType}): ${err.message}`);
 });
+app.post('/get-balance', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const user = await User.findOne({ tgId: userId });
+        if (user) {
+            return res.json({ balance: user.balance });
+        }
+        res.json({ balance: 0 });
+    } catch (error) {
+        res.status(500).json({ error: 'Internal Error' });
+    }
+});
 
 // --- 7. Keyboards ---
 const mainMenu = Markup.keyboard([

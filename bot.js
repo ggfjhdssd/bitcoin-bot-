@@ -44,7 +44,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// Withdrawal Request Schema (အသစ်)
+// Withdrawal Request Schema
 const withdrawalSchema = new mongoose.Schema({
     userId: Number,
     username: String,
@@ -61,26 +61,43 @@ const withdrawalSchema = new mongoose.Schema({
 });
 const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 
-// --- 5. Reward API for Mini App ---
-app.post('/reward-user', async (req, res) => {
+// --- 5. Reward API for Mini App (Adsgram အတွက်) ---
+// Adsgram က GET နဲ့ခေါ်တယ်၊ ဒါပေမယ့် POST ကိုလည်း လက်ခံအောင်လုပ်မယ်
+app.all('/reward-user', async (req, res) => {
     try {
-        const { userId } = req.body;
-        if (!userId) return res.status(400).send('User ID required');
-        const user = await User.findOne({ tgId: userId });
+        // Adsgram ကနေ GET သို့မဟုတ် POST နဲ့ လှမ်းပို့မယ့် userId ကို လက်ခံမယ်
+        const userId = req.query.userId || req.body.userId;
+
+        if (!userId) {
+            console.log("❌ Reward Error: No User ID provided in request.");
+            return res.status(400).send('User ID required');
+        }
+        
+        const user = await User.findOne({ tgId: Number(userId) });
         if (user) {
-            user.balance += 500;
+            user.balance += 500; // ကြော်ငြာတစ်ခုအတွက် ၅၀၀ ကျပ်ပေါင်းပေးမယ်
             await user.save();
+            
             try {
+                // User ဆီကို Telegram ကနေ Notification ပို့ပေးမယ်
                 await bot.telegram.sendMessage(userId, "💰 ကြော်ငြာကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!");
-            } catch (e) {}
+            } catch (e) {
+                console.log(`⚠️ User ${userId} ဆီ Message ပို့မရပါ (Bot ကို Block ထားနိုင်သည်)`);
+            }
+            
+            console.log(`✅ User ${userId} rewarded. New Balance: ${user.balance}`);
             return res.json({ success: true, newBalance: user.balance });
         }
+        
+        console.log(`❌ Reward Error: User ${userId} not found in database.`);
         res.status(404).send('User not found');
     } catch (error) {
+        console.error("❌ Reward Internal Error:", error);
         res.status(500).send('Internal Error');
     }
 });
 
+// Balance ပြရန် API (index.html အတွက်)
 app.post('/get-balance', async (req, res) => {
     try {
         const { userId } = req.body;

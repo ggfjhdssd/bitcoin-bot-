@@ -3,10 +3,35 @@ const { Telegraf, Markup } = require('telegraf');
 const mongoose = require('mongoose');
 const express = require('express');
 
-// --- 1. Render Port Binding & Keep-alive Server ---
+// --- 1. Render Port Binding & Server ---
 const app = express();
+app.use(express.json()); // JSON data လက်ခံရန်
 const port = process.env.PORT || 3000;
+
 app.get('/', (req, res) => res.send('Bot is Online!'));
+
+// --- AdsGram Reward API ---
+// Mini App ကနေ ကြော်ငြာကြည့်ပြီးရင် ဒီလမ်းကြောင်းကို လှမ်းခေါ်ရမှာပါ
+app.post('/reward-user', async (req, res) => {
+    const { userId } = req.body;
+    try {
+        const user = await User.findOne({ tgId: userId });
+        if (!user) return res.status(404).send("User not found");
+
+        // ကြော်ငြာကြည့်ခ တစ်ခါကြည့် ၅၀၀ ကျပ် (စိတ်ကြိုက်ပြင်နိုင်သည်)
+        const rewardAmt = 500; 
+        user.balance += rewardAmt;
+        await user.save();
+
+        // User ထံ Notification ပို့ပေးခြင်း
+        await bot.telegram.sendMessage(userId, `🎉 ကြော်ငြာကြည့်ရှုမှု အောင်မြင်ပါသည်။\n💰 သင် ${rewardAmt} ကျပ် လက်ခံရရှိပါသည်!`).catch(()=>{});
+        
+        res.status(200).send({ success: true, newBalance: user.balance });
+    } catch (err) {
+        res.status(500).send("Error");
+    }
+});
+
 app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
 // --- 2. Bot Initialization ---
@@ -45,16 +70,13 @@ async function isJoined(ctx) {
         try {
             const member = await ctx.telegram.getChatMember(ch, ctx.from.id);
             if (['left', 'kicked'].includes(member.status)) return false;
-        } catch (e) { 
-            return false; 
-        }
+        } catch (e) { return false; }
     }
     return true;
 }
 
 const isAdmin = (ctx) => String(ctx.from.id) === ADMIN_ID;
 
-// --- 6. Global Error Handler ---
 bot.catch((err, ctx) => {
     console.error(`⚠️ Telegram Error (${ctx.updateType}): ${err.message}`);
 });
@@ -62,6 +84,7 @@ bot.catch((err, ctx) => {
 // --- 7. Keyboards ---
 const mainMenu = Markup.keyboard([
     ['💰 လက်ကျန်ငွေ', '👫 ဖိတ်ခေါ်ရန်'],
+    [Markup.button.webApp('💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်', process.env.MINI_APP_URL)], // Mini App Link
     ['🗂 Wallet', '🎁 Bonus'],
     ['📤 ငွေထုတ်ယူရန်']
 ]).resize();
@@ -95,9 +118,7 @@ bot.start(async (ctx) => {
             [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
             [Markup.button.callback('✅ Joined', 'check_join')]
         ])).catch(()=>{});
-    } catch (e) { 
-        console.error("Start Error:", e); 
-    }
+    } catch (e) { console.error("Start Error:", e); }
 });
 
 bot.action('check_join', async (ctx) => {
@@ -122,9 +143,7 @@ bot.action('check_join', async (ctx) => {
         } else {
             await ctx.answerCbQuery("⚠️ Channel (၂) ခုလုံးကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
         }
-    } catch (e) {
-        console.error("Check Join Error:", e);
-    }
+    } catch (e) { console.error("Check Join Error:", e); }
 });
 
 // --- 9. Main Menu Buttons ---
@@ -389,7 +408,10 @@ bot.on('message', async (ctx) => {
         }
 
         if (user.state === 'withdraw_nrc_front' && ctx.message.photo) {
-            user.tempData = { ...user.tempData, front: ctx.message.photo[ctx.message.photo.length - 1].file_id };
+            user.tempData = { 
+                ...user.tempData, 
+                front: ctx.message.photo[ctx.message.photo.length - 1].file_id 
+            };
             user.state = 'withdraw_nrc_back';
             user.markModified('tempData');
             await user.save();
@@ -399,32 +421,18 @@ bot.on('message', async (ctx) => {
         if (user.state === 'withdraw_nrc_back' && ctx.message.photo) {
             const backId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
             const data = user.tempData;
+
             user.balance -= data.amt;
             user.state = 'none';
             user.tempData = {};
             await user.save();
+
             await ctx.reply("✅ မိတ်ဆွေရဲ့ပိုက်ဆံထုတ်ခြင်းအောင်မြင်ပါသည် မိတ်ဆွေရဲ့ငွေထုတ်စဉ်နံပါတ်ကို Admin ထံ ပို့ထားပါသည် ✨").catch(()=>{});
+
             const adminMsg = `🚨 <b>Withdrawal Request</b>\n🆔 ID: <code>${user.tgId}</code>\n👤 Name: ${data.name}\n📞 Phone: ${data.phone}\n💵 Amt: ${data.amt} MMK\n📊 Bal After: ${user.balance}\n💳 Wallet: ${user.wallet}`;
+            
             try {
                 await bot.telegram.sendMessage(LOG_GROUP_ID, adminMsg, { parse_mode: 'HTML' });
                 await bot.telegram.sendPhoto(LOG_GROUP_ID, data.front, { caption: "NRC Front" });
                 await bot.telegram.sendPhoto(LOG_GROUP_ID, backId, { caption: "NRC Back" });
-            } catch (err) {}
-        }
-    } catch (e) { console.error(e); }
-});
-
-bot.action('back_to_menu', async (ctx) => {
-    try {
-        try { await ctx.deleteMessage(); } catch (e) {}
-        await ctx.reply("🏡 မင်္ဂလာပါ! Main Menu မှာ ရွေးချယ်ပါ ✨", mainMenu).catch(()=>{});
-    } catch (e) { console.error(e); }
-});
-
-// --- 12. Bot Launch ---
-bot.launch().then(() => {
-    console.log("🚀 Super Admin Bot is running flawlessly!");
-});
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+            } catch (err) { console.log("Failed to send logs"); 

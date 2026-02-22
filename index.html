@@ -3,326 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>💰 ကြော်ငြာကြည့်ငွေရှာ</title>
+    <title>Earn Money</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            font-family: 'Pyidaungsu', 'Helvetica', sans-serif;
-            background: linear-gradient(145deg, #f0f4fa 0%, #e6ecf5 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 16px;
-            margin: 0;
-        }
-        .card {
-            background: rgba(255,255,255,0.9);
-            backdrop-filter: blur(10px);
-            border-radius: 32px;
-            padding: 28px 20px;
-            box-shadow: 0 20px 40px rgba(0,80,150,0.2), 0 8px 16px rgba(0,0,0,0.1);
-            width: 100%;
-            max-width: 400px;
-            border: 1px solid rgba(255,255,255,0.5);
-            text-align: center;
-        }
-        h2 {
-            color: #0b3954;
-            font-size: 26px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-        }
-        .sub {
-            color: #2c5f7b;
-            font-size: 16px;
-            margin-bottom: 24px;
-            background: rgba(0,136,204,0.1);
-            padding: 8px 16px;
-            border-radius: 40px;
-            display: inline-block;
-        }
-        .balance-box {
-            background: #ffffffdd;
-            border-radius: 60px;
-            padding: 12px 20px;
-            margin: 20px 0;
-            font-size: 22px;
-            font-weight: bold;
-            color: #1e4a6b;
-            border: 2px solid #aad0f5;
-            box-shadow: inset 0 2px 5px #cbdbe9;
-        }
-        .btn-ad {
-            background: linear-gradient(145deg, #ffb347, #ff8c1a);
-            border: none;
-            color: white;
-            font-weight: 800;
-            font-size: 22px;
-            padding: 22px 20px;
-            border-radius: 60px;
-            width: 100%;
-            cursor: pointer;
-            box-shadow: 0 10px 0 #b25e00, 0 8px 20px #ffb34780;
-            transition: all 0.08s linear;
-            margin: 15px 0 10px;
-            border: 2px solid #ffe0b0;
-        }
-        .btn-ad:active {
-            transform: translateY(6px);
-            box-shadow: 0 4px 0 #b25e00, 0 8px 20px #ffb34780;
-        }
-        .btn-ad:disabled {
-            opacity: 0.7;
-            transform: translateY(5px);
-            box-shadow: 0 5px 0 #b25e00, 0 8px 20px #ffb34780;
-            cursor: not-allowed;
-        }
-        .status {
-            background: #ffffffc0;
-            border-radius: 24px;
-            padding: 18px 16px;
-            margin: 16px 0 8px;
-            font-size: 16px;
-            color: #1a3c54;
-            border: 1px dashed #6ba6d0;
-            min-height: 80px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            word-break: break-word;
-        }
-        .retry-hint {
-            font-size: 14px;
-            color: #b85c00;
-            background: #fff1e0;
-            padding: 8px 12px;
-            border-radius: 30px;
-            margin-top: 15px;
-        }
-        .footer {
-            color: #6f8fa7;
-            font-size: 13px;
-            margin-top: 20px;
-        }
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #0088cc;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 10px;
-            display: none;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .show-loader .loader { display: block; }
+        body { font-family: 'Pyidaungsu', sans-serif; text-align: center; padding: 30px; background: #ffffff; color: #333; }
+        .container { border-radius: 20px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); background: #fdfdfd; }
+        h2 { color: #0088cc; font-size: 22px; }
+        .btn { background: #0088cc; color: white; border: none; padding: 18px 30px; border-radius: 15px; font-size: 18px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { background: #cccccc; }
+        #status-text { margin-top: 25px; font-size: 15px; color: #666; line-height: 1.6; }
+        #balance-display { font-size: 20px; font-weight: bold; margin-bottom: 20px; color: #0b5e2e; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h2>💸 ကြော်ငြာကြည့်ငွေရှာ 💸</h2>
-        <div class="sub">၁ ခေါက် 500 ကျပ်</div>
 
-        <div class="balance-box" id="balanceDisplay">လက်ကျန်: ...</div>
+    <div class="container">
+        <h2>💸 ကြော်ငြာကြည့်ပြီး ပိုက်ဆံရှာပါ 💸</h2>
+        <p>ကြော်ငြာတစ်ခုကြည့်လျှင် ၅၀၀ ကျပ် ရရှိမည်။</p>
+        
+        <div id="balance-display">လက်ကျန်ငွေ: ဖွင့်နေသည်...</div>
 
-        <button id="adButton" class="btn-ad" onclick="handleShowAd()">
-            📺 ကြော်ငြာကြည့်မည်
-        </button>
-
-        <div id="statusBox" class="status">
-            ကြော်ငြာကြည့်ရန် ခလုတ်ကိုနှိပ်ပါ
-        </div>
-
-        <div id="loaderContainer">
-            <div class="loader"></div>
-        </div>
-
-        <div id="retryHint" class="retry-hint" style="display: none;">
-            ⏳ ကြော်ငြာမရသေး... စက္ကန့် ၃၀ နေမှ ပြန်ကြိုးစားပါ
-        </div>
-
-        <div class="footer">⚡ Adsgram မှကြော်ငြာများ ⚡</div>
+        <button id="ad-button" class="btn" onclick="handleShowAd()">📺 ကြော်ငြာကြည့်မည်</button>
+        
+        <div id="status-text">ကြော်ငြာကြည့်ရန် အပေါ်ကခလုတ်ကို နှိပ်ပါ</div>
     </div>
 
     <script>
-        (function() {
-            const WebApp = window.Telegram.WebApp;
-            WebApp.ready();
-            WebApp.expand();
+        const WebApp = window.Telegram.WebApp;
+        WebApp.ready();
+        WebApp.expand();
 
-            // ---------- UI Elements ----------
-            const adButton = document.getElementById('adButton');
-            const statusBox = document.getElementById('statusBox');
-            const balanceDisplay = document.getElementById('balanceDisplay');
-            const loaderContainer = document.getElementById('loaderContainer');
-            const retryHint = document.getElementById('retryHint');
+        // Adsgram Block ID (သင်၏ ID ကို ဤနေရာတွင် စစ်ဆေးပါ)
+        const AdController = window.Adsgram.init({ blockId: "int-23471" });
 
-            // ---------- Adsgram Controller ----------
-            // သင့် blockId ကို သေချာစစ်ပါ။ "int-23471" အစား သင့် ID အစစ်ထည့်ပါ။
-            const BLOCK_ID = "int-23471";  // <-- ဒါကို သေချာစစ်ပါ
-            let AdController = null;
+        // User ID ရယူခြင်း
+        const userId = WebApp.initDataUnsafe?.user?.id;
+        if (!userId) {
+            document.getElementById('status-text').innerText = "❌ Telegram user ID မရပါ။ Bot မှဖွင့်ပါ။";
+        }
 
-            // Adsgram ကို init လုပ်တဲ့အခါ error ဖြစ်လည်း ဆက်သွားလို့ရအောင် try/catch ထည့်ထားတယ်
+        // လက်ကျန်ငွေပြရန်
+        async function updateBalance() {
+            if (!userId) return;
             try {
-                AdController = window.Adsgram.init({ 
-                    blockId: BLOCK_ID,
-                    debug: true,  // console log ကြည့်ချင်ရင် true ထား
-                    // optional: reward ရတဲ့အခါခေါ်မယ့် callback (ဒါပေမယ့် show() promise နဲ့တွဲသုံးရင် မလိုအပ်ပါ)
+                const res = await fetch('/get-balance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
                 });
-                console.log("✅ Adsgram initialized with block", BLOCK_ID);
+                const data = await res.json();
+                if (data.balance !== undefined) {
+                    document.getElementById('balance-display').innerText = `လက်ကျန်ငွေ: ${data.balance.toLocaleString()} ကျပ်`;
+                }
             } catch (e) {
-                console.error("❌ Adsgram init error:", e);
-                statusBox.innerHTML = "⚠️ Adsgram စတင်မရပါ။ blockId ကိုစစ်ပါ။";
-                adButton.disabled = true;
+                console.error('Balance fetch error:', e);
+            }
+        }
+
+        // စတင်ကတည်းက balance ပြရန်
+        updateBalance();
+
+        async function handleShowAd() {
+            const btn = document.getElementById('ad-button');
+            const status = document.getElementById('status-text');
+
+            btn.disabled = true;
+            status.innerText = "ခတ္တခနစောင့်ပါ... ကြော်ငြာရှာပေးနေပါသည်။ 🔎";
+
+            if (!userId) {
+                status.innerText = "❌ Telegram user ID မရပါ။ Bot မှဖွင့်ပါ။";
+                btn.disabled = false;
+                return;
             }
 
-            // ---------- Helper: get user id from Telegram ----------
-            function getUserId() {
-                try {
-                    if (WebApp.initDataUnsafe && WebApp.initDataUnsafe.user && WebApp.initDataUnsafe.user.id) {
-                        return WebApp.initDataUnsafe.user.id;
-                    }
-                } catch (e) {}
-                return null;
-            }
+            try {
+                // ကြော်ငြာပြသခြင်း
+                const result = await AdController.show();
 
-            // ---------- Helper: update balance from server (optional) ----------
-            async function fetchBalance() {
-                const userId = getUserId();
-                if (!userId) return;
-                try {
-                    // ဒီ endpoint ကို မင်း backend မှာ ထည့်ထားဖို့လိုမယ် (ဥပမာ /get-balance)
-                    // အခုမရှိသေးရင် ဒီအပိုင်းကို ချန်ထားခဲ့လို့ရတယ်။
-                } catch (e) {}
-            }
+                if (result && result.done) {
+                    status.innerHTML = "<b>✅ ကြော်ငြာကြည့်ရှုမှု အောင်မြင်သည်။</b><br>ပိုက်ဆံပေါင်းထည့်နေသည်... ⏳";
+                    
+                    // Bot Backend သို့ Reward တောင်းဆိုခြင်း
+                    const response = await fetch('/reward-user', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId: userId })
+                    });
 
-            // ---------- Main: show ad and claim reward ----------
-            window.handleShowAd = async function() {
-                // disable button
-                adButton.disabled = true;
-                statusBox.innerHTML = "⏳ ကြော်ငြာရှာဖွေနေသည်...";
-                loaderContainer.classList.add('show-loader');
-                retryHint.style.display = 'none';
-
-                // ၁။ user id ရှိရဲ့လား စစ်
-                const userId = getUserId();
-                if (!userId) {
-                    statusBox.innerHTML = "❌ Telegram user ID မရပါ။ Bot မှဖွင့်ပါ။";
-                    adButton.disabled = false;
-                    loaderContainer.classList.remove('show-loader');
-                    return;
-                }
-
-                // ၂။ Adsgram controller ရှိရဲ့လား စစ်
-                if (!AdController) {
-                    statusBox.innerHTML = "❌ Adsgram စတင်မရပါ။ ပြန်ဖွင့်ကြည့်ပါ။";
-                    adButton.disabled = false;
-                    loaderContainer.classList.remove('show-loader');
-                    return;
-                }
-
-                // ၃။ ကြော်ငြာခေါ်မယ်
-                try {
-                    console.log("🟡 Calling Adsgram.show()...");
-                    const result = await AdController.show();
-                    console.log("✅ Adsgram show() result:", result);
-
-                    // Adsgram က အောင်မြင်ရင် result.done === true လား စစ် (documentation အရ)
-                    if (result && result.done === true) {
-                        statusBox.innerHTML = "✅ ကြော်ငြာကြည့်ရှုမှု အောင်မြင်ပြီ! ငွေပေါင်းထည့်နေသည်...";
-
-                        // ၄။ backend ကို reward ပို့မယ် (POST /reward-user)
-                        let retryCount = 0;
-                        const maxRetry = 2;
-                        let success = false;
-
-                        while (retryCount <= maxRetry && !success) {
-                            try {
-                                const response = await fetch('/reward-user', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ userId: userId })
-                                });
-
-                                if (response.ok) {
-                                    const data = await response.json();
-                                    if (data.success) {
-                                        success = true;
-                                        statusBox.innerHTML = "💰 <b style='color:green;'>500 ကျပ် ရရှိပါပြီ။</b><br>Bot မှ message ပို့ပါမည်။";
-                                        if (data.newBalance) {
-                                            balanceDisplay.innerText = `လက်ကျန်: ${data.newBalance.toLocaleString()} ကျပ်`;
-                                        } else {
-                                            balanceDisplay.innerText = `လက်ကျန်: ပေါင်းထည့်ပြီး`;
-                                        }
-                                    } else {
-                                        statusBox.innerHTML = "⚠️ ဆာဗာက ငွေမပေါင်းထည့်နိုင်ပါ။";
-                                    }
-                                } else {
-                                    throw new Error(`HTTP ${response.status}`);
-                                }
-                            } catch (err) {
-                                console.warn(`Retry ${retryCount+1} failed:`, err);
-                                retryCount++;
-                                if (retryCount <= maxRetry) {
-                                    await new Promise(r => setTimeout(r, 1000)); // 1 sec delay
-                                } else {
-                                    statusBox.innerHTML = "❌ ဆာဗာသို့မပို့နိုင်ပါ။ ငွေမရသေးပါ။";
-                                }
-                            }
-                        }
+                    const data = await response.json();
+                    if(data.success) {
+                        status.innerHTML = "<b style='color:green;'>💰 ၅၀၀ ကျပ် ပေါင်းထည့်ပြီးပါပြီ။</b><br>Bot မှ Message ပို့ပေးပါလိမ့်မည်။";
+                        updateBalance(); // လက်ကျန်ကို ပြန်ပြ
                     } else {
-                        // result.done မဟုတ်ရင် ကြော်ငြာအဆုံးထိမကြည့်တာမျိုး
-                        statusBox.innerHTML = "⚠️ ကြော်ငြာကို အဆုံးထိမကြည့်ရသေး။ ပြန်ကြိုးစားပါ။";
+                        status.innerText = "❌ ပိုက်ဆံပေါင်းထည့်ရာတွင် အမှားအယွင်းရှိပါသည်။";
                     }
-                } catch (error) {
-                    // Adsgram show() က error ပြန်လာရင် (ဥပမာ ကြော်ငြာမရှိ)
-                    console.error("❌ Adsgram error:", error);
-
-                    // error object ကို စစ်ပြီး သင့်တော်တဲ့ message ပြမယ်
-                    if (error && error.message) {
-                        if (error.message.includes('No ad')) {
-                            statusBox.innerHTML = "😢 ယခုချိန်တွင် ကြော်ငြာမရှိသေးပါ။ ခဏအကြာမှပြန်ကြိုးစားပါ။";
-                            // retry hint ပြမယ်
-                            retryHint.style.display = 'block';
-                        } else {
-                            statusBox.innerHTML = `⚠️ ကြော်ငြာပြသ၍မရပါ (${error.message})`;
-                        }
-                    } else {
-                        statusBox.innerHTML = "❌ ကြော်ငြာပြသ၍မရပါ။";
-                    }
-                } finally {
-                    // button ကို ပြန်ဖွင့်မယ် (ချက်ချင်းမဖွင့်ချင်၊ ဒါပေမယ့် ပြန်ဖွင့်လိုက်)
-                    adButton.disabled = false;
-                    loaderContainer.classList.remove('show-loader');
+                } else {
+                    status.innerText = "⚠️ ကြော်ငြာကို အဆုံးထိကြည့်မှ ငွေရပါမည်။";
                 }
-            };
+            } catch (error) {
+                console.error(error);
+                // Adsgram error ကို ကိုင်တွယ်ခြင်း
+                if (error && error.message && error.message.includes('No ad')) {
+                    status.innerHTML = "❌ <b style='color:red;'>ယခုအချိန်တွင် ကြော်ငြာမရှိသေးပါ။</b><br>ခဏကြာမှ ပြန်ကြိုးစားပေးပါ။";
+                } else {
+                    status.innerHTML = "❌ <b style='color:red;'>ကြော်ငြာပြသ၍မရပါ။</b><br>နောက်မှပြန်ကြိုးစားပါ။";
+                }
+            } finally {
+                btn.disabled = false;
+            }
+        }
 
-            // ---------- optional: load balance on start ----------
-            (async function initBalance() {
-                const userId = getUserId();
-                if (!userId) return;
-                try {
-                    const response = await fetch('/get-balance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
-                    if (response.ok) {
-                        const data = await response.json();
-                        if (data.balance !== undefined) {
-                            balanceDisplay.innerText = `လက်ကျန်: ${data.balance.toLocaleString()} ကျပ်`;
-                        }
-                    }
-                } catch (e) {}
-            })();
-
-        })();
+        // ခလုတ်ကို global မှာရနိုင်
+        window.handleShowAd = handleShowAd;
     </script>
 </body>
 </html>

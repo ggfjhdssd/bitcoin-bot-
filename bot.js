@@ -18,7 +18,7 @@ app.get('/', (req, res) => {
 // --- 2. Bot Initialization ---
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = String(process.env.ADMIN_ID).trim();
-const LOG_GROUP_ID = process.env.LOG_GROUP_ID; // ဒီထဲကို user messages နဲ့ withdrawal requests ပို့မယ်
+const LOG_GROUP_ID = process.env.LOG_GROUP_ID;
 
 // --- 3. Database Connection ---
 mongoose.connect(process.env.MONGODB_URI)
@@ -483,9 +483,6 @@ bot.command('withdrawals', async (ctx) => {
 
 // ==================== WITHDRAWAL APPROVAL SYSTEM ====================
 
-// ငွေထုတ်ခြင်း step များ (user state)
-// အောက်ပါ message handler မှာ ဆက်လုပ်မယ်
-
 // Admin က approve/reject လုပ်ဖို့ callback buttons
 bot.action(/^approve_withdraw_(.+)$/, async (ctx) => {
     if (!isAdmin(ctx)) return;
@@ -494,32 +491,35 @@ bot.action(/^approve_withdraw_(.+)$/, async (ctx) => {
     if (!withdrawal) return ctx.answerCbQuery("❌ ငွေထုတ်မှုမတွေ့ပါ။");
     if (withdrawal.status !== 'pending') return ctx.answerCbQuery("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
 
-    // ငွေထုတ်မှုကို approve
+    const user = await User.findOne({ tgId: withdrawal.userId });
+    if (!user) return ctx.answerCbQuery("❌ User မတွေ့ပါ။");
+
+    if (user.balance < withdrawal.amount) {
+        // ငွေမလုံလောက်ရင် reject
+        withdrawal.status = 'rejected';
+        withdrawal.reviewedAt = new Date();
+        withdrawal.reviewedBy = ctx.from.id;
+        withdrawal.rejectReason = 'လက်ကျန်ငွေမလုံလောက်ပါ။';
+        await withdrawal.save();
+
+        try {
+            await bot.telegram.sendMessage(withdrawal.userId, `❌ သင့်ငွေထုတ်မှု ${withdrawal.amount} ကျပ် ငြင်းပယ်ခံရပါသည်။ အကြောင်းရင်း: လက်ကျန်ငွေမလုံလောက်ပါ။`);
+        } catch (e) {}
+
+        await ctx.editMessageCaption(`❌ ငွေထုတ်မှု ငြင်းပယ်ခဲ့သည် (ငွေမလုံလောက်)\nUser: ${withdrawal.userId}\nငွေပမာဏ: ${withdrawal.amount} ကျပ်`, {
+            reply_markup: { inline_keyboard: [] }
+        });
+        return ctx.answerCbQuery("❌ ငွေမလုံလောက်");
+    }
+
+    // Approve
+    user.balance -= withdrawal.amount;
+    await user.save();
+
     withdrawal.status = 'approved';
     withdrawal.reviewedAt = new Date();
     withdrawal.reviewedBy = ctx.from.id;
     await withdrawal.save();
-
-    // user ရဲ့ balance ကို လျှော့ပေးမယ် (အရင်က temp လျှော့ပြီးသားလား? ဒီမှာ ပြန်စစ်ရမယ်)
-    // အရင် withdrawal လုပ်တုန်းက balance ကို မလျှော့ထားဘူး။ ဒီမှာ လျှော့မယ်။
-    const user = await User.findOne({ tgId: withdrawal.userId });
-    if (user) {
-        if (user.balance >= withdrawal.amount) {
-            user.balance -= withdrawal.amount;
-            await user.save();
-        } else {
-            // ငွေမလုံလောက်ရင် reject လုပ်သင့်တယ်
-            withdrawal.status = 'rejected';
-            withdrawal.rejectReason = 'လက်ကျန်ငွေမလုံလောက်ပါ။';
-            await withdrawal.save();
-            await ctx.answerCbQuery("❌ User ရဲ့လက်ကျန်မလုံလောက်ပါ။");
-            // Notify user
-            try {
-                await bot.telegram.sendMessage(withdrawal.userId, `❌ သင့်ငွေထုတ်မှု ${withdrawal.amount} ကျပ် ငြင်းပယ်ခံရပါသည်။ အကြောင်းရင်း: လက်ကျန်ငွေမလုံလောက်ပါ။`);
-            } catch (e) {}
-            return;
-        }
-    }
 
     // Notify user
     try {
@@ -539,18 +539,25 @@ bot.action(/^reject_withdraw_(.+)$/, async (ctx) => {
     if (!withdrawal) return ctx.answerCbQuery("❌ ငွေထုတ်မှုမတွေ့ပါ။");
     if (withdrawal.status !== 'pending') return ctx.answerCbQuery("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
 
-    // Ask for reject reason
-    await ctx.reply("ငြင်းပယ်ရသည့် အကြောင်းရင်းကို ရိုက်ထည့်ပါ။ (ဥပမာ - NRC မှားနေသည်)");
-    // We need to store state for admin to receive reason. We'll use a temporary state in context session? But we don't have session. Instead we can use a simple approach: set a temp data in a global variable? Not good. Better to use a separate collection or just ask in a follow-up message.
-    // For simplicity, we'll set the withdrawal's temp field and then wait for admin's reply.
-    // But we need to handle that. We'll use a simple method: store the withdrawal ID in admin's tempData (but admin is not a user in our DB). We can use a separate in-memory store, but it's not persistent. Let's do a simpler approach: after clicking reject, we ask for reason in a new message, and then admin replies with reason. We'll capture that in message handler.
-
-    // We'll store the withdrawal ID in a temporary global object (not recommended for production but works for now). For production, use a proper session store.
-    // Instead, we'll just send a message and then expect admin to reply with reason, and we'll use a simple flag in admin's state. But admin might not have a user record. We'll store in a Map.
+    // Store in memory for admin to input reason
     if (!global.pendingRejects) global.pendingRejects = new Map();
     global.pendingRejects.set(ctx.from.id, withdrawId);
 
-    await ctx.answerCbQuery("ကျေးဇူးပြု၍ ငြင်းပယ်ရသည့်အကြောင်းရင်းကို ရိုက်ထည့်ပါ။");
+    await ctx.reply("ငြင်းပယ်ရသည့် အကြောင်းရင်းကို ရိုက်ထည့်ပါ။ (ဥပမာ - NRC မှားနေသည်)");
+    await ctx.answerCbQuery();
+});
+
+// ==================== VPN & AD MESSAGE ====================
+
+bot.command('ad', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    if (!user || user.isBanned) return;
+    await ctx.reply("🔒 **VPN ခံပြီးမှ ကြော်ငြာကြည့်ပါ**\n\n🌐 VPN မသုံးရင် ကြော်ငြာမပြနိုင်ပါ။", {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+            [Markup.button.webApp('📺 ကြော်ငြာကြည့်ရန်', 'https://bitcoin-bot-2zmf.onrender.com')]
+        ])
+    });
 });
 
 // ==================== GLOBAL MESSAGE HANDLER (Withdrawal, Wallet, Forward to Log Group) ====================
@@ -684,7 +691,6 @@ bot.on('message', async (ctx) => {
                 await bot.telegram.sendPhoto(LOG_GROUP_ID, photo.file_id, { caption: "NRC အနောက်ဘက်" });
             } catch (e) {
                 console.error("Failed to send withdrawal to log group:", e);
-                // If failed, maybe inform admin directly?
             }
             return;
         }

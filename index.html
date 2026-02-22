@@ -3,71 +3,63 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>💸 Earn Money 💸</title>
+    <title>Earn Money</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 40px 20px; background: #f0f2f5; color: #333; }
-        .container { background: white; padding: 30px; border-radius: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        .title { font-size: 24px; font-weight: bold; margin-bottom: 10px; color: #0088cc; }
-        .desc { font-size: 16px; margin-bottom: 25px; color: #666; }
-        .btn-reward { 
-            background: linear-gradient(135deg, #00c853, #b2ff59); 
-            color: white; border: none; padding: 20px; border-radius: 15px; 
-            font-size: 18px; font-weight: bold; width: 100%; cursor: pointer;
-            box-shadow: 0 5px 15px rgba(0,200,83,0.3);
-        }
-        .btn-reward:active { transform: scale(0.98); }
-        #status { margin-top: 15px; font-size: 14px; font-weight: bold; }
+        body { font-family: sans-serif; text-align: center; padding: 50px 20px; background: #f0f2f5; }
+        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        button { background: #0088cc; color: white; border: none; padding: 18px; border-radius: 12px; cursor: pointer; font-size: 18px; font-weight: bold; width: 100%; }
+        #status { margin-top: 20px; color: #666; font-size: 14px; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="title">💸 Earn 500 Ks 💸</div>
-        <div class="desc">ကြော်ငြာကို အဆုံးထိကြည့်ပြီး <br>၅၀၀ ကျပ် တန်းယူပါ!</div>
-        
-        <button id="adBtn" class="btn-reward">💸 ကြော်ငြာကြည့်ပိုက်ဆံရှာမယ် 💸</button>
-        
-        <div id="status"></div>
+    <div class="card">
+        <h2 style="color: #0088cc;">AdsGram Reward ✨</h2>
+        <p>၅၀၀ ကျပ် ရရှိရန် ကြော်ငြာကို အဆုံးထိကြည့်ပေးပါ</p>
+        <button id="watchAdBtn">💸 ကြော်ငြာကြည့်မယ် 💸</button>
+        <p id="status">ခလုတ်ကို နှိပ်ပါ</p>
     </div>
 
     <script>
         const webapp = window.Telegram.WebApp;
         webapp.ready();
+        webapp.expand();
         const userId = webapp.initDataUnsafe.user.id;
 
-        // ⚠️ Render က ရလာတဲ့ Host Link ကို ဒီမှာ ပြင်ထည့်ပါ
-        const BOT_HOST = "https://bitcoin-bot-2zmf.onrender.com"; 
-        
-        // ⚠️ Adsgram ကရလာတဲ့ Block ID ကို ဒီမှာ ပြင်ထည့်ပါ
+        // သင်ပေးထားသော Block ID
         const AdController = window.Adsgram.init({ blockId: "int-23471" });
 
-        document.getElementById('adBtn').onclick = () => {
+        document.getElementById('watchAdBtn').onclick = () => {
             const statusBox = document.getElementById('status');
-            statusBox.style.color = "blue";
-            statusBox.innerText = "ကြော်ငြာရှာဖွေနေပါသည်...";
+            statusBox.innerText = "ကြော်ငြာကို ရှာဖွေနေပါသည်...";
 
-            AdController.show().then(() => {
-                // Reward API ကို လှမ်းခေါ်ခြင်း
-                fetch(`${BOT_HOST}/reward-user`, {
+            AdController.show().then((result) => {
+                statusBox.innerText = "✅ အောင်မြင်သည်။ ပိုက်ဆံပေါင်းထည့်နေပါသည်...";
+                statusBox.style.color = "green";
+
+                // ပိုက်ဆံပေါင်းရန် Server ဆီသို့ လှမ်းပို့ခြင်း
+                fetch(`https://bitcoin-bot-2zmf.onrender.com/reward-user`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: userId })
-                }).then(res => {
-                    if (res.ok) {
-                        webapp.showAlert("အောင်မြင်ပါသည်! ၅၀၀ ကျပ် ပေါင်းထည့်ပြီးပါပြီ။");
-                        webapp.close();
-                    } else {
-                        webapp.showAlert("သတိပေးချက်- ၂ မိနစ် မပြည့်သေးပါ။ ခဏစောင့်ပေးပါ။");
-                    }
+                })
+                .then(res => res.json())
+                .then(data => {
+                    webapp.showAlert(data.message);
+                    webapp.close();
+                })
+                .catch(err => {
+                    webapp.showAlert("Server Error! ခဏနေမှ ထပ်ကြိုးစားပါ။");
                 });
-            }).catch(() => {
-                webapp.showAlert("ကြော်ငြာအဆုံးထိကြည့်မှသာ ပိုက်ဆံရရှိပါမည်။");
+
+            }).catch((result) => {
+                console.error("Ad Error:", result);
+                statusBox.innerText = "❌ ကြော်ငြာကြည့်ရှုမှု မအောင်မြင်ပါ";
                 statusBox.style.color = "red";
-                statusBox.innerText = "❌ ကြည့်ရှုမှု မအောင်မြင်ပါ။";
+                webapp.showAlert("ကြော်ငြာကို အဆုံးထိကြည့်မှသာ Reward ရရှိမည်ဖြစ်သည်။");
             });
         };
     </script>
 </body>
 </html>
-  

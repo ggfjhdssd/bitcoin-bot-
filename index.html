@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="my">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,59 +7,57 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; padding: 50px 20px; background: #f0f2f5; }
-        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        button { background: #0088cc; color: white; border: none; padding: 18px; border-radius: 12px; cursor: pointer; font-size: 18px; font-weight: bold; width: 100%; }
-        #status { margin-top: 20px; color: #666; font-size: 14px; font-weight: bold; }
+        body { font-family: sans-serif; text-align: center; padding: 50px; background: #f4f4f4; }
+        .btn { background: #0088cc; color: white; border: none; padding: 15px 30px; border-radius: 10px; font-size: 18px; cursor: pointer; }
+        .btn:disabled { background: #cccccc; }
+        #status-text { margin-top: 20px; color: #555; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h2 style="color: #0088cc;">AdsGram Reward ✨</h2>
-        <p>၅၀၀ ကျပ် ရရှိရန် ကြော်ငြာကို အဆုံးထိကြည့်ပေးပါ</p>
-        <button id="watchAdBtn">💸 ကြော်ငြာကြည့်မယ် 💸</button>
-        <p id="status">ခလုတ်ကို နှိပ်ပါ</p>
-    </div>
+
+    <h2>💸 ကြော်ငြာကြည့်ပြီး ပိုက်ဆံရှာပါ 💸</h2>
+    
+    <button id="ad-button" class="btn" onclick="handleShowAd()">📺 ကြော်ငြာကြည့်မည်</button>
+    
+    <div id="status-text"></div>
 
     <script>
-        const webapp = window.Telegram.WebApp;
-        webapp.ready();
-        webapp.expand();
-        const userId = webapp.initDataUnsafe.user.id;
+        const WebApp = window.Telegram.WebApp;
+        WebApp.ready();
 
-        // သင်ပေးထားသော Block ID
+        // AdsGram Initialize (သင့် Block ID)
         const AdController = window.Adsgram.init({ blockId: "int-23471" });
 
-        document.getElementById('watchAdBtn').onclick = () => {
-            const statusBox = document.getElementById('status');
-            statusBox.innerText = "ကြော်ငြာကို ရှာဖွေနေပါသည်...";
+        async function handleShowAd() {
+            const btn = document.getElementById('ad-button');
+            const status = document.getElementById('status-text');
 
-            AdController.show().then((result) => {
-                statusBox.innerText = "✅ အောင်မြင်သည်။ ပိုက်ဆံပေါင်းထည့်နေပါသည်...";
-                statusBox.style.color = "green";
+            // ၁။ စာသားပြောင်းပြီး ခလုတ်ပိတ်မည်
+            btn.disabled = true;
+            status.innerText = "ခတ္တခနစောင့်ပါ... ကြော်ငြာရှာပေးနေပါသည်။ 🔎";
 
-                // ပိုက်ဆံပေါင်းရန် Server ဆီသို့ လှမ်းပို့ခြင်း
-                fetch(`https://bitcoin-bot-2zmf.onrender.com/reward-user`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ userId: userId })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    webapp.showAlert(data.message);
-                    webapp.close();
-                })
-                .catch(err => {
-                    webapp.showAlert("Server Error! ခဏနေမှ ထပ်ကြိုးစားပါ။");
-                });
+            try {
+                // ၂။ ကြော်ငြာပြမည်
+                const result = await AdController.show();
 
-            }).catch((result) => {
-                console.error("Ad Error:", result);
-                statusBox.innerText = "❌ ကြော်ငြာကြည့်ရှုမှု မအောင်မြင်ပါ";
-                statusBox.style.color = "red";
-                webapp.showAlert("ကြော်ငြာကို အဆုံးထိကြည့်မှသာ Reward ရရှိမည်ဖြစ်သည်။");
-            });
-        };
+                if (result.done) {
+                    status.innerText = "✅ ကြော်ငြာကြည့်ရှုမှု အောင်မြင်သည်။ ပိုက်ဆံပေါင်းထည့်နေသည်...";
+                    // ၃။ Backend သို့ Reward ပို့မည်
+                    await fetch('/reward-user', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId: WebApp.initDataUnsafe.user.id })
+                    });
+                    status.innerText = "💰 ၅၀၀ ကျပ် ပေါင်းထည့်ပြီးပါပြီ။";
+                } else {
+                    status.innerText = "⚠️ ကြော်ငြာကို အဆုံးထိကြည့်မှ ငွေရပါမည်။";
+                }
+            } catch (error) {
+                status.innerText = "❌ ယခုအချိန်တွင် ကြော်ငြာမရှိသေးပါ။ နောက်မှ ပြန်ကြိုးစားပါ။";
+            } finally {
+                btn.disabled = false;
+            }
+        }
     </script>
 </body>
 </html>

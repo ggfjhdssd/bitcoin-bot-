@@ -23,9 +23,9 @@
         <h2>💸 ကြော်ငြာကြည့်ပြီး ပိုက်ဆံရှာပါ 💸</h2>
         <p>ကြော်ငြာတစ်ခုကြည့်လျှင် ၅၀၀ ကျပ် ရရှိမည်။</p>
         
-        <div id="balance-display">လက်ကျန်ငွေ: ဖွင့်နေသည်...</div>
+        <div id="balance-display">လက်ကျန်ငွေ: <span id="balance-value">ဖွင့်နေသည်...</span></div>
 
-        <button id="ad-button" class="btn" onclick="handleShowAd()">📺 ကြော်ငြာကြည့်မည်</button>
+        <button id="ad-button" class="btn" onclick="confirmShowAd()">📺 ကြော်ငြာကြည့်မည်</button>
         
         <div id="status-text">ကြော်ငြာကြည့်ရန် အပေါ်ကခလုတ်ကို နှိပ်ပါ</div>
     </div>
@@ -55,7 +55,7 @@
                 });
                 const data = await res.json();
                 if (data.balance !== undefined) {
-                    document.getElementById('balance-display').innerText = `လက်ကျန်ငွေ: ${data.balance.toLocaleString()} ကျပ်`;
+                    document.getElementById('balance-value').innerText = data.balance.toLocaleString() + ' ကျပ်';
                 }
             } catch (e) {
                 console.error('Balance fetch error:', e);
@@ -64,6 +64,22 @@
 
         // စတင်ကတည်းက balance ပြရန်
         updateBalance();
+
+        // ကြော်ငြာကြည့်ရန် အတည်ပြု Popup ပြခြင်း
+        function confirmShowAd() {
+            WebApp.showPopup({
+                title: 'အတည်ပြုချက်',
+                message: 'ကြော်ငြာကြည့်ရှုမည် သေချာပါသလား?',
+                buttons: [
+                    { id: 'cancel', type: 'cancel', text: 'မကြည့်ပါ' },
+                    { id: 'ok', type: 'default', text: 'ကြည့်မည်' }
+                ]
+            }, (buttonId) => {
+                if (buttonId === 'ok') {
+                    handleShowAd(); // ကြည့်မည် ကိုနှိပ်မှ ကြော်ငြာစမယ်
+                }
+            });
+        }
 
         async function handleShowAd() {
             const btn = document.getElementById('ad-button');
@@ -85,19 +101,35 @@
                 if (result && result.done) {
                     status.innerHTML = "<b>✅ ကြော်ငြာကြည့်ရှုမှု အောင်မြင်သည်။</b><br>ပိုက်ဆံပေါင်းထည့်နေသည်... ⏳";
                     
-                    // Bot Backend သို့ Reward တောင်းဆိုခြင်း
-                    const response = await fetch('/reward-user', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ userId: userId })
-                    });
+                    // Bot Backend သို့ Reward တောင်းဆိုခြင်း (Retry 2 ကြိမ်)
+                    let success = false;
+                    for (let i = 0; i < 3; i++) {
+                        try {
+                            const response = await fetch('/reward-user', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ userId: userId })
+                            });
 
-                    const data = await response.json();
-                    if(data.success) {
-                        status.innerHTML = "<b style='color:green;'>💰 ၅၀၀ ကျပ် ပေါင်းထည့်ပြီးပါပြီ။</b><br>Bot မှ Message ပို့ပေးပါလိမ့်မည်။";
-                        updateBalance(); // လက်ကျန်ကို ပြန်ပြ
-                    } else {
-                        status.innerText = "❌ ပိုက်ဆံပေါင်းထည့်ရာတွင် အမှားအယွင်းရှိပါသည်။";
+                            if (response.ok) {
+                                const data = await response.json();
+                                if (data.success) {
+                                    success = true;
+                                    status.innerHTML = "<b style='color:green;'>💰 ၅၀၀ ကျပ် ပေါင်းထည့်ပြီးပါပြီ။</b><br>Bot မှ Message ပို့ပေးပါလိမ့်မည်။";
+                                    updateBalance(); // လက်ကျန်ကို ပြန်ပြ
+                                    WebApp.showPopup({ message: '၅၀၀ ကျပ် ရရှိပါပြီ။', buttons: [{ type: 'ok' }] });
+                                    break;
+                                }
+                            }
+                        } catch (err) {
+                            console.warn(`Retry ${i+1} failed:`, err);
+                            if (i < 2) await new Promise(r => setTimeout(r, 1000));
+                        }
+                    }
+
+                    if (!success) {
+                        status.innerText = "❌ ဆာဗာသို့မပို့နိုင်ပါ။ ငွေမရသေးပါ။ စာမျက်နှာကို ပြန်ဖွင့်ကြည့်ပါ။";
+                        WebApp.showPopup({ message: 'ငွေပေါင်းထည့်ရာတွင် ပြဿနာရှိသည်။ ခဏနေပြီး ပြန်ကြိုးစားပါ။', buttons: [{ type: 'ok' }] });
                     }
                 } else {
                     status.innerText = "⚠️ ကြော်ငြာကို အဆုံးထိကြည့်မှ ငွေရပါမည်။";
@@ -116,7 +148,7 @@
         }
 
         // ခလုတ်ကို global မှာရနိုင်
-        window.handleShowAd = handleShowAd;
+        window.confirmShowAd = confirmShowAd;
     </script>
 </body>
 </html>

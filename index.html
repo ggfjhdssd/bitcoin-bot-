@@ -11,17 +11,12 @@
         .container { border-radius: 20px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); background: #fdfdfd; border: 1px solid #eee; }
         h2 { color: #0088cc; font-size: 22px; margin-bottom: 10px; }
         .vpn-warning { color: #ff0000; font-weight: bold; font-size: 13px; margin-bottom: 15px; border: 1px dashed #ff0000; padding: 8px; border-radius: 10px; background: #fff5f5; }
-        
-        /* Balance Display */
         #balance-display { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #0b5e2e; background: #fff9c4; padding: 15px; border-radius: 15px; display: flex; align-items: center; justify-content: center; gap: 10px; border: 2px solid #fbc02d; }
-        
-        /* Buttons Style */
         .btn { color: white; border: none; padding: 15px 20px; border-radius: 15px; font-size: 17px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; margin-top: 10px; }
         #ad-button { background: #0088cc; }
         #withdraw-button { background: #28a745; }
         .btn:active { transform: scale(0.98); }
         .btn:disabled { background: #cccccc !important; cursor: not-allowed; }
-        
         #status-text { margin-top: 20px; font-size: 14px; color: #666; min-height: 40px; }
         #timer-text { font-size: 14px; color: #ff5722; font-weight: bold; margin-top: 5px; }
     </style>
@@ -38,8 +33,7 @@
         </div>
 
         <div class="vpn-warning">
-            ⚠️ အထူးသတိပေးချက် ⚠️<br>
-            ကြော်ငြာကြည့်ရန် VPN (USA/UK/Japan) တစ်ခုခုကို မဖြစ်မနေ ဖွင့်ထားပေးပါ။
+            ⚠️ VPN (USA/UK) ဖွင့်ထားမှ ကြော်ငြာပေါ်ပါမည်။
         </div>
 
         <button id="ad-button" class="btn" onclick="confirmShowAd()">📺 ကြော်ငြာကြည့်မည်</button>
@@ -55,13 +49,11 @@
         WebApp.ready();
         WebApp.expand();
 
-        // Adsgram Block ID 
         const AdController = window.Adsgram.init({ blockId: "int-23471" });
 
-        // Local Storage စနစ်
         let localBalance = parseInt(localStorage.getItem('my_coin_balance')) || 0;
-        const REWARD_AMOUNT = 2000; // ကြော်ငြာတစ်ခု ၂၀၀၀ MMK
-        const MIN_WITHDRAW = 100000; // အနည်းဆုံး ၁ သိန်း
+        const REWARD_AMOUNT = 2000;
+        const MIN_WITHDRAW = 100000;
         const TIMER_KEY = 'ad_cooldown_expiry';
 
         function displayBalance() {
@@ -71,7 +63,6 @@
         displayBalance();
         checkExistingTimer();
 
-        // Timer ရှိမရှိ စစ်ဆေးခြင်း
         function checkExistingTimer() {
             const expiry = localStorage.getItem(TIMER_KEY);
             if (expiry) {
@@ -84,12 +75,10 @@
             }
         }
 
-        // Timer စတင်ခြင်း (မိနစ် ၉၀)
         function startTimer(duration) {
             const btn = document.getElementById('ad-button');
             const timerDisplay = document.getElementById('timer-text');
             let timer = duration;
-
             btn.disabled = true;
 
             const countdown = setInterval(() => {
@@ -97,7 +86,7 @@
                 let minutes = parseInt((timer % 3600) / 60, 10);
                 let seconds = parseInt(timer % 60, 10);
 
-                timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${hours} နာရီ ${minutes} မိနစ် ${seconds} စက္ကန့် စောင့်ပါ`;
+                timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${hours}:${minutes}:${seconds} စောင့်ပါ`;
 
                 if (--timer < 0) {
                     clearInterval(countdown);
@@ -111,7 +100,7 @@
         function confirmShowAd() {
             WebApp.showPopup({
                 title: 'ကြော်ငြာကြည့်မည်',
-                message: '၂,၀၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိကြည့်ပါ။ (၁ နာရီခွဲလျှင် တစ်ကြိမ်သာ ကြည့်နိုင်ပါသည်)',
+                message: '၂,၀၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိ (၁၄ စက္ကန့်ကျော်) ကြည့်ပေးပါ။ ကြားထဲမှ ပိတ်လိုက်ပါက ပိုက်ဆံရမည်မဟုတ်ပါ။',
                 buttons: [
                     { id: 'cancel', type: 'cancel', text: 'မကြည့်သေးပါ' },
                     { id: 'ok', type: 'default', text: 'ကြည့်မည်' }
@@ -125,33 +114,43 @@
 
         async function handleShowAd() {
             const status = document.getElementById('status-text');
+            const btn = document.getElementById('ad-button');
+            
             status.innerHTML = "<b>ကြော်ငြာရှာနေသည်... 🔎</b>";
+            btn.disabled = true;
 
             try {
+                // ကြော်ငြာစပြတဲ့အချိန်ကို မှတ်မယ်
+                const startTime = Date.now();
+
                 const result = await AdController.show();
 
-                // ကြော်ငြာအဆုံးထိကြည့်ပြီးမှ (done ဖြစ်မှ) Reward ပေးမည်
-                if (result && result.done) {
+                // ကြော်ငြာကြည့်ပြီးချိန်ကို တွက်မယ်
+                const endTime = Date.now();
+                const watchedSeconds = Math.floor((endTime - startTime) / 1000);
+
+                // Adsgram က done ဖြစ်ရမယ် + user ကြည့်တဲ့ကြာချိန်က ၁၄ စက္ကန့်ထက် ကျော်ရမယ်
+                if (result && result.done && watchedSeconds >= 14) {
                     localBalance += REWARD_AMOUNT;
                     localStorage.setItem('my_coin_balance', localBalance);
                     displayBalance();
                     
-                    status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၂,၀၀၀ MMK ရရှိပါပြီ။ ✨</b>";
+                    status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၂,၀၀၀ MMK ရရှိပါပြီ။</b>";
                     
-                    // ၁ နာရီခွဲ Timer (၅၄၀၀ စက္ကန့်) သတ်မှတ်ခြင်း
-                    const cooldownSeconds = 5400;
-                    const expiryTime = Date.now() + (cooldownSeconds * 1000);
-                    localStorage.setItem(TIMER_KEY, expiryTime);
+                    const cooldownSeconds = 5400; // ၁ နာရီခွဲ
+                    localStorage.setItem(TIMER_KEY, Date.now() + (cooldownSeconds * 1000));
                     startTimer(cooldownSeconds);
 
                     WebApp.showAlert("ဂုဏ်ယူပါတယ်! ၂,၀၀၀ MMK ရရှိပါပြီ။");
                 } else {
-                    // ကြည့်နေရင်း ပိတ်လိုက်လျှင်
-                    status.innerHTML = "<b style='color:orange;'>⚠️ ကြော်ငြာကို အဆုံးထိမကြည့်လျှင် ပိုက်ဆံမရပါ။</b>";
-                    WebApp.showAlert("ကြော်ငြာကို အဆုံးထိကြည့်မှ ပိုက်ဆံရပါမည်။");
+                    // ၁၄ စက္ကန့်မပြည့်ခင် ပိတ်လိုက်ရင်
+                    btn.disabled = false;
+                    status.innerHTML = "<b style='color:orange;'>⚠️ ကြော်ငြာကို အဆုံးထိမကြည့်ရသေးပါ။ (အနည်းဆုံး ၁၄ စက္ကန့် ကြည့်ပေးပါ)</b>";
+                    WebApp.showAlert("ကြော်ငြာကို အဆုံးထိကြည့်မှ ပိုက်ဆံရပါမည်။ ကျေးဇူးပြု၍ ပြန်ကြည့်ပေးပါ။");
                 }
             } catch (error) {
-                status.innerHTML = "<b style='color:red;'>❌ ကြော်ငြာမရှိပါ။ VPN (USA/UK) ပြောင်းကြည့်ပါ။</b>";
+                btn.disabled = false;
+                status.innerHTML = "<b style='color:red;'>❌ ကြော်ငြာမရှိပါ။ VPN ပြောင်းကြည့်ပါ။</b>";
             }
         }
 

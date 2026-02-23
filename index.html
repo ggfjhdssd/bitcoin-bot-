@@ -88,28 +88,30 @@
         function startTimer(duration) {
             const btn = document.getElementById('ad-button');
             const timerDisplay = document.getElementById('timer-text');
-            let timer = duration;
-
+            
             // Stop any existing timer
             stopTimer();
             
             btn.disabled = true;
+            let timer = duration;
 
             timerInterval = setInterval(() => {
-                let seconds = parseInt(timer % 60, 10);
-                timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${seconds} စက္ကန့် စောင့်ပါ`;
-
-                if (--timer < 0) {
+                if (timer <= 0) {
+                    // Timer finished
                     stopTimer();
                     timerDisplay.innerText = "";
                     btn.disabled = false;
                     localStorage.removeItem(TIMER_KEY);
+                    return;
                 }
+                
+                timerDisplay.innerText = `နောက်ထပ်ကြည့်ရန် ${timer} စက္ကန့် စောင့်ပါ`;
+                timer--;
             }, 1000);
         }
 
         function confirmShowAd() {
-            // Check if timer is active (button disabled) - if yes, don't allow
+            // Check if timer is active (button disabled)
             if (document.getElementById('ad-button').disabled) {
                 WebApp.showAlert("ကျေးဇူးပြု၍ timer ပြီးသည်အထိ စောင့်ပါ။");
                 return;
@@ -150,7 +152,7 @@
                     
                     status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၂,၀၀၀ MMK ရရှိပါပြီ။</b>";
                     
-                    const cooldownSeconds = 60; // ၁ မိနစ်
+                    const cooldownSeconds = 300; // ၅ မိနစ် (၃၀၀ စက္ကန့်)
                     localStorage.setItem(TIMER_KEY, Date.now() + (cooldownSeconds * 1000));
                     startTimer(cooldownSeconds);
 

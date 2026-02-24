@@ -41,7 +41,7 @@
 
         <button id="withdraw-button" class="btn" onclick="handleWithdraw()">💸 ငွေထုတ်မည်</button>
         
-        <div id="status-text">ကြော်ငြာတစ်ခုကြည့်လျှင် ၂,၀၀၀ MMK ရပါမည်</div>
+        <div id="status-text">ကြော်ငြာတစ်ခုကြည့်လျှင် ၅၀၀ MMK ရပါမည်</div>
     </div>
 
     <script>
@@ -52,7 +52,7 @@
         const AdController = window.Adsgram.init({ blockId: "int-23471" });
 
         let localBalance = parseInt(localStorage.getItem('my_coin_balance')) || 0;
-        const REWARD_AMOUNT = 2000;
+        const REWARD_AMOUNT = 500; // ပြောင်းလဲချက်: 2000 -> 500
         const MIN_WITHDRAW = 100000;
         const TIMER_KEY = 'ad_cooldown_expiry';
 
@@ -119,7 +119,7 @@
 
             WebApp.showPopup({
                 title: 'ကြော်ငြာကြည့်မည်',
-                message: '၂,၀၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိ (၁၄ စက္ကန့်ကျော်) ကြည့်ပေးပါ။',
+                message: '၅၀၀ MMK ရရှိရန် ကြော်ငြာကို အဆုံးထိ (၁၄ စက္ကန့်ကျော်) ကြည့်ပေးပါ။', // ပြောင်းလဲချက်
                 buttons: [
                     { id: 'cancel', type: 'cancel', text: 'မကြည့်သေးပါ' },
                     { id: 'ok', type: 'default', text: 'ကြည့်မည်' }
@@ -150,13 +150,13 @@
                     localStorage.setItem('my_coin_balance', localBalance);
                     displayBalance();
                     
-                    status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၂,၀၀၀ MMK ရရှိပါပြီ။</b>";
+                    status.innerHTML = "<b style='color:green;'>✅ အောင်မြင်သည်။ ၅၀၀ MMK ရရှိပါပြီ။</b>"; // ပြောင်းလဲချက်
                     
                     const cooldownSeconds = 300; // ၅ မိနစ် (၃၀၀ စက္ကန့်)
                     localStorage.setItem(TIMER_KEY, Date.now() + (cooldownSeconds * 1000));
                     startTimer(cooldownSeconds);
 
-                    WebApp.showAlert("ဂုဏ်ယူပါတယ်! ၂,၀၀၀ MMK ရရှိပါပြီ။");
+                    WebApp.showAlert("ဂုဏ်ယူပါတယ်! ၅၀၀ MMK ရရှိပါပြီ။"); // ပြောင်းလဲချက်
                 } else {
                     btn.disabled = false;
                     status.innerHTML = "<b style='color:orange;'>⚠️ ကြော်ငြာကို အဆုံးထိမကြည့်ရသေးပါ။ (အနည်းဆုံး ၁၄ စက္ကန့် ကြည့်ပေးပါ)</b>";

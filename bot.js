@@ -44,7 +44,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// Withdrawal Request Schema (အသစ်)
+// Withdrawal Request Schema
 const withdrawalSchema = new mongoose.Schema({
     userId: Number,
     username: String,
@@ -58,7 +58,8 @@ const withdrawalSchema = new mongoose.Schema({
     reviewedAt: Date,
     reviewedBy: Number,
     rejectReason: String,
-    verificationScreenshot: String // ငွေလွှဲပြေစာ screenshot
+    verificationScreenshot: String,
+    amountDeducted: { type: Boolean, default: false } // ငွေနုတ်ပြီးလားဆိုတာ စစ်ရန်
 });
 const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 
@@ -233,7 +234,7 @@ bot.hears('🎁 Bonus', async (ctx) => {
     ctx.reply(`🎉 သင် ${bonus} ကျပ် ရရှိလိုက်ပြီ ဖြစ်ပါသည်။`).catch(()=>{});
 });
 
-// ==================== ငွေထုတ်ခြင်း အဆင့်များ (ပြင်ဆင်ပြီး) ====================
+// ==================== ငွေထုတ်ခြင်း အဆင့်များ ====================
 bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
     const user = await User.findOne({ tgId: ctx.from.id });
     if (!user) return;
@@ -244,7 +245,7 @@ bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
     ctx.reply("📱 ငွေထုတ်ယူမည့် Kpay/Wave ဖုန်းနံပါတ်ကို ပို့ပေးပါ (ဂဏန်းသီးသန့်) 👇").catch(()=>{});
 });
 
-// ==================== ADMIN COMMANDS (အပြည့်အစုံ) ====================
+// ==================== ADMIN COMMANDS ====================
 bot.command('panel', async (ctx) => {
     if (!isAdmin(ctx)) return;
     const total = await User.countDocuments();
@@ -499,12 +500,6 @@ bot.action(/^approve_withdraw_(.+)$/, async (ctx) => {
     const user = await User.findOne({ tgId: withdrawal.userId });
     if (!user) return ctx.answerCbQuery("❌ User မတွေ့ပါ။");
 
-    // Approve (ဒီမှာ verification fee 3000 ကို ထည့်မတွက်တော့ဘူး၊ user က 3000 လွှဲပြီးသားမို့ ပြန်ပေးရုံ)
-    // ဒါပေမယ့် မူရင်းငွေထုတ်ပမာဏကို လျှော့ချင်ရင် ဒီနေရာမှာ လျှော့နိုင်တယ်။
-    // ဒီနေရာမှာ ငွေမလျှော့တော့ဘူး (user က 3000 လွှဲပြီးသား)
-    // withdrawal.amount က မူရင်းထုတ်ချင်တဲ့ပမာဏ (ဥပမာ 100000)
-    // verification fee 3000 ကို ထည့်ပြီး စုစုပေါင်း 103000 ပြန်ပေးမယ်လို့ message မှာပြောမယ်။
-
     withdrawal.status = 'approved';
     withdrawal.reviewedAt = new Date();
     withdrawal.reviewedBy = ctx.from.id;
@@ -541,7 +536,7 @@ bot.action(/^reject_withdraw_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery();
 });
 
-// ==================== GLOBAL MESSAGE HANDLER (Withdrawal, Wallet, Forward to Log Group) ====================
+// ==================== GLOBAL MESSAGE HANDLER ====================
 
 // In-memory store for admin reject reasons
 if (!global.pendingRejects) global.pendingRejects = new Map();
@@ -567,6 +562,17 @@ bot.on('message', async (ctx) => {
             if (!withdrawal) return ctx.reply("❌ ငွေထုတ်မှုမတွေ့ပါ။");
             if (withdrawal.status !== 'pending') return ctx.reply("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
 
+            // ---- Refund Logic: ငွေပြန်ပေါင်းပေး ----
+            if (withdrawal.amountDeducted) {
+                const user = await User.findOne({ tgId: withdrawal.userId });
+                if (user) {
+                    user.balance += withdrawal.amount;
+                    await user.save();
+                    console.log(`💰 Refunded ${withdrawal.amount} to user ${withdrawal.userId}`);
+                }
+            }
+            // -----------------------------------------
+
             withdrawal.status = 'rejected';
             withdrawal.reviewedAt = new Date();
             withdrawal.reviewedBy = ctx.from.id;
@@ -575,10 +581,14 @@ bot.on('message', async (ctx) => {
 
             // Notify user with custom reason
             try {
-                await bot.telegram.sendMessage(withdrawal.userId, `❌ သင့်ငွေထုတ်မှုကို ငြင်းပယ်လိုက်ပါသည်။\nအကြောင်းရင်း: ${reason}`);
+                await bot.telegram.sendMessage(withdrawal.userId, 
+                    `❌ သင့်ငွေထုတ်မှုကို ငြင်းပယ်လိုက်ပါသည်။\n` +
+                    `အကြောင်းရင်း: ${reason}\n\n` +
+                    `ငွေထုတ်မှုအတွက် နုတ်ထားသော ငွေပမာဏ ${withdrawal.amount.toLocaleString()} ကျပ်ကို သင့်အကောင့်ထဲသို့ ပြန်လည်ပေါင်းထည့်ပေးလိုက်ပါပြီ။`
+                );
             } catch (e) {}
 
-            await ctx.reply(`✅ ငွေထုတ်မှု ငြင်းပယ်ပြီးပါပြီ။\nUser: ${withdrawal.userId}\nအကြောင်းရင်း: ${reason}`);
+            await ctx.reply(`✅ ငွေထုတ်မှု ငြင်းပယ်ပြီးပါပြီ။\nUser: ${withdrawal.userId}\nအကြောင်းရင်း: ${reason}\n💰 ငွေပြန်ပေါင်းပြီးပါပြီ။`);
             return;
         }
 
@@ -610,7 +620,9 @@ bot.on('message', async (ctx) => {
 
         if (user.state === 'withdraw_amount') {
             const amt = parseInt(ctx.message.text);
-            if (isNaN(amt) || amt < 100000 || amt > user.balance) return ctx.reply("❌ ပမာဏ မှားယွင်းနေပါသည်။");
+            if (isNaN(amt) || amt < 100000) return ctx.reply("❌ ပမာဏ မှားယွင်းနေပါသည်။ အနည်းဆုံး 100,000 ကျပ် ဖြစ်ရပါမည်။");
+            if (amt > user.balance) return ctx.reply("❌ သင့်လက်ကျန်ငွေ မလုံလောက်ပါ။");
+            
             user.tempData = { ...user.tempData, amt: amt };
             user.state = 'withdraw_nrc_front';
             user.markModified('tempData');
@@ -639,13 +651,14 @@ bot.on('message', async (ctx) => {
                 name: data.name,
                 amount: data.amt,
                 nrcFront: data.front,
-                nrcBack: photo.file_id
+                nrcBack: photo.file_id,
+                amountDeducted: false
             });
             await withdrawal.save();
 
             // Clear user state and set new state for verification screenshot
             user.state = 'waiting_verification_screenshot';
-            user.tempData = { withdrawalId: withdrawal._id }; // store withdrawal id
+            user.tempData = { withdrawalId: withdrawal._id };
             await user.save();
 
             // Send message to user asking for verification fee
@@ -695,6 +708,19 @@ bot.on('message', async (ctx) => {
                 return ctx.reply("❌ ငွေထုတ်မှုမှတ်တမ်း မတွေ့ပါ။");
             }
 
+            // ---- Check if user has sufficient balance before deducting ----
+            if (user.balance < withdrawal.amount) {
+                user.state = 'none';
+                user.tempData = {};
+                await user.save();
+                return ctx.reply("❌ သင့်လက်ကျန်ငွေ မလုံလောက်ပါ။ ငွေထုတ်ခြင်းကို ပယ်ဖျက်လိုက်ပါသည်။");
+            }
+
+            // ---- Deduct amount from user balance immediately ----
+            user.balance -= withdrawal.amount;
+            withdrawal.amountDeducted = true;
+            // ------------------------------------------------
+
             // Save screenshot to withdrawal
             withdrawal.verificationScreenshot = photo.file_id;
             await withdrawal.save();
@@ -707,6 +733,7 @@ bot.on('message', async (ctx) => {
             // Send confirmation to user
             await ctx.reply(
                 `ငွေလွှဲပြေစာ (Screenshot) ကို လက်ခံရရှိပါပြီ။ ✅\n\n` +
+                `သင့်အကောင့်မှ ထုတ်ယူမည့်ငွေ ${withdrawal.amount.toLocaleString()} ကျပ်ကိ် နုတ်ယူထားပါသည်။\n\n` +
                 `လူကြီးမင်းရဲ့ အချက်အလက်တွေနဲ့ ငွေလွှဲမှုကို Admin ဘက်က အမြန်ဆုံး စစ်ဆေးနေပါတယ်ဗျ။ အတည်ပြုပြီးတာနဲ့ လူကြီးမင်း ထုတ်ယူထားတဲ့ ငွေပမာဏနဲ့ Verification Fee စုစုပေါင်း (၁၀၃,၀၀၀ ကျပ်) ကို လူကြီးမင်းရဲ့ Kpay/Wave ဆီကို ၁ မိနစ်အတွင်း လွှဲပေးတော့မှာ ဖြစ်ပါတယ်။ 💸✨\n\n` +
                 `ခေတ္တခဏလေး သည်းခံစောင့်ဆိုင်းပေးပါဦးနော်။ ကျွန်တော်တို့ရဲ့ Bitcoin Mining Myanmar ကို ယုံကြည်စွာ အသုံးပြုပေးတဲ့အတွက် ကျေးဇူးအထူးတင်ပါတယ်ခင်ဗျာ။ 🙏`
             );
@@ -717,7 +744,8 @@ bot.on('message', async (ctx) => {
                     caption: `🆕 **Verification Fee Screenshot**\n\n` +
                              `User ID: ${user.tgId}\n` +
                              `Withdrawal ID: ${withdrawal._id}\n` +
-                             `ငွေထုတ်ပမာဏ: ${withdrawal.amount} ကျပ်`,
+                             `ငွေထုတ်ပမာဏ: ${withdrawal.amount} ကျပ်\n` +
+                             `💰 ငွေနုတ်ပြီးပါပြီ။`,
                     parse_mode: 'Markdown',
                     ...Markup.inlineKeyboard([
                         [

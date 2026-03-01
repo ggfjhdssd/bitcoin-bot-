@@ -102,7 +102,8 @@ app.post('/get-balance', async (req, res) => {
 
 app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
-const CHANNELS = ['@BitCoinMyannmar', '@BitCoinMyan'];
+// --- Channel တစ်ခုတည်းသာ ထားရန် ---
+const CHANNELS = ['@BitCoinMyannmar']; // Channel 2 (@BitCoinMyan) ကို ဖယ်ရှားပြီး Channel 1 တစ်ခုတည်းသာ ထားရှိ
 
 // --- 6. Helpers ---
 async function isJoined(ctx) {
@@ -147,12 +148,11 @@ bot.start(async (ctx) => {
 
         if (user.isBanned) return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
 
-        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel နှစ်ခုကို မJoin ထားရင် \nငွေထုတ်ရမည်မဟုတ်ပါ❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ခုကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ကို မJoin ထားရင် \nငွေထုတ်ရမည်မဟုတ်ပါ❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၁ခုကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
 
         await ctx.reply(msg, Markup.inlineKeyboard([
             [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/BitCoinMyannmar')],
-            [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
-            [Markup.button.callback('✅ Joined', 'check_join')]
+            [Markup.button.callback('✅ Joined', 'check_join')] // Channel 2 button ကို ဖြုတ်ပြီး
         ])).catch(()=>{});
     } catch (e) { console.error(e); }
 });
@@ -161,19 +161,24 @@ bot.action('check_join', async (ctx) => {
     try {
         if (await isJoined(ctx)) {
             const user = await User.findOne({ tgId: ctx.from.id });
+            
+            // Referral Bonus Logic - Channel 1 တစ်ခုတည်း join ထားရင် ရပါပြီ
             if (user && user.referredBy) {
                 const refUser = await User.findOne({ tgId: user.referredBy });
                 if (refUser) {
                     await User.updateOne({ tgId: user.referredBy }, { $inc: { balance: 5000, referralCount: 1 } });
-                    try { await bot.telegram.sendMessage(refUser.tgId, `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!`); } catch (err) {}
+                    try { 
+                        await bot.telegram.sendMessage(refUser.tgId, `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!`); 
+                    } catch (err) {}
                 }
                 user.referredBy = null;
                 await user.save();
             }
+            
             try { await ctx.deleteMessage(); } catch (e) {}
             await ctx.reply("🏡 မင်္ဂလာပါ! Main Menu မှာ ရွေးချယ်ပါ ✨", mainMenu).catch(()=>{});
         } else {
-            await ctx.answerCbQuery("⚠️ Channel (၂) ခုလုံးကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
+            await ctx.answerCbQuery("⚠️ Channel (၁) ခုကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
         }
     } catch (e) { console.error(e); }
 });
@@ -487,7 +492,7 @@ bot.command('withdrawals', async (ctx) => {
     await ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-// ==================== WITHDRAWAL APPROVAL SYSTEM (ပြင်ဆင်ပြီး) ====================
+// ==================== WITHDRAWAL APPROVAL SYSTEM ====================
 
 // Admin က approve/reject လုပ်ဖို့ callback buttons
 bot.action(/^approve_withdraw_(.+)$/, async (ctx) => {
@@ -733,7 +738,7 @@ bot.on('message', async (ctx) => {
             // Send confirmation to user
             await ctx.reply(
                 `ငွေလွှဲပြေစာ (Screenshot) ကို လက်ခံရရှိပါပြီ။ ✅\n\n` +
-                `သင့်အကောင့်မှ ထုတ်ယူမည့်ငွေ ${withdrawal.amount.toLocaleString()} ကျပ်ကိ် နုတ်ယူထားပါသည်။\n\n` +
+                `သင့်အကောင့်မှ ထုတ်ယူမည့်ငွေ ${withdrawal.amount.toLocaleString()} ကျပ်ကို နုတ်ယူထားပါသည်။\n\n` +
                 `လူကြီးမင်းရဲ့ အချက်အလက်တွေနဲ့ ငွေလွှဲမှုကို Admin ဘက်က အမြန်ဆုံး စစ်ဆေးနေပါတယ်ဗျ။ အတည်ပြုပြီးတာနဲ့ လူကြီးမင်း ထုတ်ယူထားတဲ့ ငွေပမာဏနဲ့ Verification Fee စုစုပေါင်း (၁၀၃,၀၀၀ ကျပ်) ကို လူကြီးမင်းရဲ့ Kpay/Wave ဆီကို ၁ မိနစ်အတွင်း လွှဲပေးတော့မှာ ဖြစ်ပါတယ်။ 💸✨\n\n` +
                 `ခေတ္တခဏလေး သည်းခံစောင့်ဆိုင်းပေးပါဦးနော်။ ကျွန်တော်တို့ရဲ့ Bitcoin Mining Myanmar ကို ယုံကြည်စွာ အသုံးပြုပေးတဲ့အတွက် ကျေးဇူးအထူးတင်ပါတယ်ခင်ဗျာ။ 🙏`
             );

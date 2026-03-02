@@ -40,7 +40,8 @@ const userSchema = new mongoose.Schema({
     isBanned: { type: Boolean, default: false },
     state: { type: String, default: 'none' },
     tempData: { type: Object, default: {} },
-    lastActive: { type: Date, default: Date.now }
+    lastActive: { type: Date, default: Date.now },
+    hasReceivedReferralBonus: { type: Boolean, default: false } // Referral Bonus ရပြီးလားဆိုတာ စစ်ရန်
 });
 const User = mongoose.model('User', userSchema);
 
@@ -102,8 +103,8 @@ app.post('/get-balance', async (req, res) => {
 
 app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
-// --- Channel တစ်ခုတည်းသာ ထားရန် ---
-const CHANNELS = ['@BitCoinMyannmar']; // Channel 2 (@BitCoinMyan) ကို ဖယ်ရှားပြီး Channel 1 တစ်ခုတည်းသာ ထားရှိ
+// --- Channel ၂ ခုစလုံး ထားရှိရန် ---
+const CHANNELS = ['@BitCoinMyannmar', '@BitCoinMyan']; // Channel ၂ ခုစလုံး
 
 // --- 6. Helpers ---
 async function isJoined(ctx) {
@@ -111,7 +112,10 @@ async function isJoined(ctx) {
         try {
             const member = await ctx.telegram.getChatMember(ch, ctx.from.id);
             if (['left', 'kicked'].includes(member.status)) return false;
-        } catch (e) { return false; }
+        } catch (e) { 
+            console.error(`Channel check error for ${ch}:`, e);
+            return false; 
+        }
     }
     return true;
 }
@@ -148,11 +152,12 @@ bot.start(async (ctx) => {
 
         if (user.isBanned) return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
 
-        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ကို မJoin ထားရင် \nငွေထုတ်ရမည်မဟုတ်ပါ❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၁ခုကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
 
         await ctx.reply(msg, Markup.inlineKeyboard([
             [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/BitCoinMyannmar')],
-            [Markup.button.callback('✅ Joined', 'check_join')] // Channel 2 button ကို ဖြုတ်ပြီး
+            [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
+            [Markup.button.callback('✅ Joined', 'check_join')]
         ])).catch(()=>{});
     } catch (e) { console.error(e); }
 });
@@ -162,15 +167,35 @@ bot.action('check_join', async (ctx) => {
         if (await isJoined(ctx)) {
             const user = await User.findOne({ tgId: ctx.from.id });
             
-            // Referral Bonus Logic - Channel 1 တစ်ခုတည်း join ထားရင် ရပါပြီ
-            if (user && user.referredBy) {
+            // Referral Bonus Logic - Channel ၂ ခုလုံး join ထားမှသာ ရမည်
+            if (user && user.referredBy && !user.hasReceivedReferralBonus) {
                 const refUser = await User.findOne({ tgId: user.referredBy });
                 if (refUser) {
-                    await User.updateOne({ tgId: user.referredBy }, { $inc: { balance: 5000, referralCount: 1 } });
+                    // Referrer ကို 5000 ကျပ် ပေါင်းပေး
+                    await User.updateOne(
+                        { tgId: user.referredBy }, 
+                        { $inc: { balance: 5000, referralCount: 1 } }
+                    );
+                    
+                    // Referrer ကို အကြောင်းကြား
                     try { 
-                        await bot.telegram.sendMessage(refUser.tgId, `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!`); 
+                        await bot.telegram.sendMessage(
+                            refUser.tgId, 
+                            `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!\n\n` +
+                            `လက်ကျန်: ${refUser.balance + 5000} ကျပ်`
+                        ); 
                     } catch (err) {}
+                    
+                    // New user ကိုလည်း Bonus ပေး (Optional)
+                    user.balance += 5000;
                 }
+                
+                // Referral Bonus ရပြီးကြောင်း မှတ်သား
+                user.hasReceivedReferralBonus = true;
+                user.referredBy = null;
+                await user.save();
+            } else if (user && user.referredBy && user.hasReceivedReferralBonus) {
+                // Bonus ရပြီးသားဆိုရင် referredBy ကိုပဲ ရှင်းပေး
                 user.referredBy = null;
                 await user.save();
             }
@@ -178,7 +203,7 @@ bot.action('check_join', async (ctx) => {
             try { await ctx.deleteMessage(); } catch (e) {}
             await ctx.reply("🏡 မင်္ဂလာပါ! Main Menu မှာ ရွေးချယ်ပါ ✨", mainMenu).catch(()=>{});
         } else {
-            await ctx.answerCbQuery("⚠️ Channel (၁) ခုကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
+            await ctx.answerCbQuery("⚠️ Channel (၂) ခုလုံးကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
         }
     } catch (e) { console.error(e); }
 });
@@ -244,6 +269,12 @@ bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
     const user = await User.findOne({ tgId: ctx.from.id });
     if (!user) return;
     if (user.isBanned) return;
+    
+    // Channel ၂ ခုလုံး Join ထားရဲ့လား ထပ်စစ်
+    if (!(await isJoined(ctx))) {
+        return ctx.reply("⚠️ ငွေထုတ်ယူရန်အတွက် Channel ၂ ခုလုံးကို Join ထားရပါမည်။").catch(()=>{});
+    }
+    
     if (user.balance < 100000) return ctx.reply("⚠ သင်ထုတ်ယူနိုင်ရန်အနည်းဆုံး 100,000 ကျပ် ရှိရပါမည်").catch(()=>{});
     user.state = 'withdraw_phone';
     await user.save();
@@ -303,6 +334,7 @@ bot.command('user', async (ctx) => {
                 `👫 Referrals: ${user.referralCount}\n` +
                 `🗂 Wallet: ${user.wallet}\n` +
                 `🚫 Banned: ${user.isBanned ? 'Yes' : 'No'}\n` +
+                `🎁 Referral Bonus Received: ${user.hasReceivedReferralBonus ? 'Yes' : 'No'}\n` +
                 `📅 Last Bonus: ${user.lastBonus ? user.lastBonus.toLocaleString() : 'None'}\n` +
                 `🕒 Last Active: ${user.lastActive ? user.lastActive.toLocaleString() : 'Never'}`;
     await ctx.reply(msg, { parse_mode: 'HTML' });

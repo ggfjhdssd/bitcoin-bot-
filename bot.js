@@ -103,17 +103,20 @@ app.post('/get-balance', async (req, res) => {
 
 app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
-// --- Channel ၂ ခုစလုံး ထားရှိရန် ---
-const CHANNELS = ['@Bitcoinmyanmarmining', '@BitCoinMyan']; // Channel ၂ ခုစလုံး
+// --- Channel ၂ ခုစလုံး ထားရှိရန် (အတိအကျ username) ---
+const CHANNELS = ['@Bitcoinmyanmarmining', '@BitCoinMyan'];
 
 // --- 6. Helpers ---
 async function isJoined(ctx) {
     for (const ch of CHANNELS) {
         try {
             const member = await ctx.telegram.getChatMember(ch, ctx.from.id);
-            if (['left', 'kicked'].includes(member.status)) return false;
+            // Allowed statuses: 'member', 'administrator', 'creator'
+            if (!['member', 'administrator', 'creator'].includes(member.status)) {
+                return false;
+            }
         } catch (e) { 
-            console.error(`Channel check error for ${ch}:`, e);
+            console.error(`Channel check error for ${ch}:`, e.message);
             return false; 
         }
     }
@@ -152,7 +155,8 @@ bot.start(async (ctx) => {
 
         if (user.isBanned) return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
 
-        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+        // Welcome message ထဲက channel username ကို ပြင်ထားသည်
+        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @Bitcoinmyanmarmining\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
 
         await ctx.reply(msg, Markup.inlineKeyboard([
             [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/Bitcoinmyanmarmining')],

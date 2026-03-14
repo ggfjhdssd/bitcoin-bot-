@@ -1048,6 +1048,13 @@ io.on('connection', (socket) => {
       if (game.board[row][col]!=='') return socket.emit('error',{msg:'ထိုနေရာ ယူပြီးသား'});
 
 
+      // ── FIX A: safe symbol lookup (handles both Number & String keys) ──
+      const sym = game.symbols[myUserId] || game.symbols[String(myUserId)];
+      if (!sym) return socket.emit('error',{msg:'Symbol မတွေ့ပါ — ဂိမ်းပြန်ဝင်ပါ'});
+
+      // ── FIX B: guard – reject if game already ended by another path ──
+      if (game.status !== 'active') return;
+
       // Sabotage check – if user is about to win, trigger one of the three tactics
       // ⚠️  DO NOT MODIFY handleSabotage – intentional game mechanic
       if (game.aiType === AI_TYPE_SABOTAGE && checkWinAfterMove(game.board, row, col, sym)) {
@@ -1055,13 +1062,6 @@ io.on('connection', (socket) => {
         await handleSabotage(game, myUserId, {row, col});
         return;
       }
-
-      // ── FIX A: safe symbol lookup (handles both Number & String keys) ──
-      const sym = game.symbols[myUserId] || game.symbols[String(myUserId)];
-      if (!sym) return socket.emit('error',{msg:'Symbol မတွေ့ပါ — ဂိမ်းပြန်ဝင်ပါ'});
-
-      // ── FIX B: guard – reject if game already ended by another path ──
-      if (game.status !== 'active') return;
 
       // Normal move processing
       clearTurnTimer(gameId);

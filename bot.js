@@ -103,8 +103,8 @@ app.post('/get-balance', async (req, res) => {
 
 app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 
-// --- Channel ၂ ခုစလုံး ထားရှိရန် ---
-const CHANNELS = ['@BitCoinMyannmar', '@BitCoinMyan']; // Channel ၂ ခုစလုံး
+// --- Channel တစ်ခု ထားရှိရန် ---
+const CHANNELS = ['@Bitcoinmyanmarmining', '@BitCoinMyan']; // Channel ၂ ခု
 
 // --- 6. Helpers ---
 async function isJoined(ctx) {
@@ -152,10 +152,10 @@ bot.start(async (ctx) => {
 
         if (user.isBanned) return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
 
-        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @Bitcoinmyanmarmining\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
 
         await ctx.reply(msg, Markup.inlineKeyboard([
-            [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/BitCoinMyannmar')],
+            [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/Bitcoinmyanmarmining')],
             [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
             [Markup.button.callback('✅ Joined', 'check_join')]
         ])).catch(()=>{});
@@ -167,7 +167,7 @@ bot.action('check_join', async (ctx) => {
         if (await isJoined(ctx)) {
             const user = await User.findOne({ tgId: ctx.from.id });
             
-            // Referral Bonus Logic - Channel ၂ ခုလုံး join ထားမှသာ ရမည်
+            // Referral Bonus Logic - Channel join ထားမှသာ ရမည်
             if (user && user.referredBy && !user.hasReceivedReferralBonus) {
                 const refUser = await User.findOne({ tgId: user.referredBy });
                 if (refUser) {
@@ -270,7 +270,7 @@ bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
     if (!user) return;
     if (user.isBanned) return;
     
-    // Channel ၂ ခုလုံး Join ထားရဲ့လား ထပ်စစ်
+    // Channel Join ထားရဲ့လား ထပ်စစ်
     if (!(await isJoined(ctx))) {
         return ctx.reply("⚠️ ငွေထုတ်ယူရန်အတွက် Channel ၂ ခုလုံးကို Join ထားရပါမည်။").catch(()=>{});
     }

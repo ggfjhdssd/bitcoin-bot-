@@ -1,1719 +1,839 @@
-const express = require('express');
-const { Telegraf, Markup } = require('telegraf');
-const { Server } = require('socket.io');
-const http = require('http');
-const mongoose = require('mongoose');
-const crypto = require('crypto');
-const https = require('https');
 require('dotenv').config();
+const { Telegraf, Markup } = require('telegraf');
+const mongoose = require('mongoose');
+const express = require('express');
+const path = require('path');
 
+// --- 1. Render Port Binding & Mini App Server ---
 const app = express();
-const server = http.createServer(app);
+const port = process.env.PORT || 3000;
 
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,x-admin-id');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
 app.use(express.json());
+app.use(express.static(__dirname)); // index.html က bot.js နဲ့ ဘေးချင်းယှဉ်ရှိရပါမယ်
 
-const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET','POST'] },
-  allowEIO3: true,
-  pingTimeout: 30000,
-  pingInterval: 10000
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID ? parseInt(process.env.ADMIN_ID) : null;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://tictokfrontend.vercel.app';
-const BACKEND_URL = process.env.BACKEND_URL || 'https://tiktocbackend.onrender.com';
-const BOT_USERNAME = process.env.BOT_USERNAME || 'tictoe1_bot';
-const ENTRY_FEE = 500;
-const WIN_PRIZE = 800;
-const DRAW_REFUND = 250;
-const TURN_SECONDS = 10;
-const SEARCH_TIMEOUT_S = 60;
+// --- 2. Bot Initialization ---
+const bot = new Telegraf(process.env.BOT_TOKEN);
+const ADMIN_ID = String(process.env.ADMIN_ID).trim();
+const LOG_GROUP_ID = process.env.LOG_GROUP_ID;
 
-// ===== MongoDB =====
-let isConnected = false;
-async function connectDB() {
-  const uris = [process.env.MONGODB_URI1, process.env.MONGODB_URI2].filter(Boolean);
-  for (const uri of uris) {
-    try {
-      await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
-      isConnected = true;
-      console.log('✅ MongoDB connected');
-      return;
-    } catch (e) { console.error('❌ MongoDB failed:', e.message); }
-  }
-  setTimeout(connectDB, 10000);
-}
-mongoose.connection.on('disconnected', () => { isConnected = false; });
-mongoose.connection.on('reconnected', () => { isConnected = true; });
-connectDB();
+// --- 3. Database Connection ---
+mongoose.connect(process.env.MONGODB_URI)
+    .then(() => console.log("✅ Database Connected!"))
+    .catch(err => { 
+        console.log("❌ DB Error:", err); 
+        process.exit(1); 
+    });
 
-// ===== Schemas =====
+// --- 4. Database Schema ---
 const userSchema = new mongoose.Schema({
-  telegramId: { type: Number, required: true, unique: true },
-  username: { type: String, default: '' },
-  firstName: { type: String, default: '' },
-  balance: { type: Number, default: 0 },
-  referredBy: { type: Number, default: null },
-  referralCode: { type: String, unique: true, sparse: true },
-  totalGames: { type: Number, default: 0 },
-  wins: { type: Number, default: 0 },
-  losses: { type: Number, default: 0 },
-  isBanned: { type: Boolean, default: false },
-  botMode: { type: Boolean, default: false },
-  lastActive: { type: Date, default: Date.now },
-  createdAt: { type: Date, default: Date.now }
+    tgId: { type: Number, unique: true },
+    username: String,
+    balance: { type: Number, default: 0 },
+    referredBy: { type: Number, default: null },
+    referralCount: { type: Number, default: 0 },
+    wallet: { type: String, default: "⛔ မသတ်မှတ်ရသေးပါ" },
+    lastBonus: { type: Date, default: null },
+    isBanned: { type: Boolean, default: false },
+    state: { type: String, default: 'none' },
+    tempData: { type: Object, default: {} },
+    lastActive: { type: Date, default: Date.now },
+    hasReceivedReferralBonus: { type: Boolean, default: false } // Referral Bonus ရပြီးလားဆိုတာ စစ်ရန်
 });
-userSchema.index({ telegramId: 1 });
-userSchema.index({ referralCode: 1 });
-
-const depositSchema = new mongoose.Schema({
-  userId: { type: Number, required: true },
-  kpayName: String,
-  transactionId: { type: String, required: true, unique: true },
-  amount: { type: Number, required: true },
-  status: { type: String, enum: ['pending','confirmed','rejected'], default: 'pending' },
-  createdAt: { type: Date, default: Date.now },
-  processedAt: Date
-});
-depositSchema.index({ transactionId: 1 });
-depositSchema.index({ status: 1 });
-
-const withdrawalSchema = new mongoose.Schema({
-  userId: { type: Number, required: true },
-  kpayName: String,
-  kpayNumber: String,
-  amount: { type: Number, required: true },
-  status: { type: String, enum: ['pending','confirmed','rejected'], default: 'pending' },
-  createdAt: { type: Date, default: Date.now },
-  processedAt: Date
-});
-withdrawalSchema.index({ status: 1 });
-
-const gameSchema = new mongoose.Schema({
-  gameId: { type: String, required: true, unique: true },
-  players: [Number],
-  playerNames: { type: Map, of: String, default: {} },
-  symbols: { type: Map, of: String },
-  board: { type: [[String]], default: () => Array(5).fill(null).map(() => Array(5).fill('')) },
-  winner: { type: mongoose.Schema.Types.Mixed, default: null },
-  winnerName: { type: String, default: '' },
-  status: { type: String, enum: ['waiting','active','completed'], default: 'waiting' },
-  isAIGame: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now, expires: 86400*30 }
-});
-gameSchema.index({ gameId: 1 });
-
-const settingsSchema = new mongoose.Schema({
-  key: { type: String, unique: true },
-  value: mongoose.Schema.Types.Mixed
-});
-
-
-const redeemCodeSchema = new mongoose.Schema({
-  code:       { type: String, required: true, unique: true, uppercase: true, trim: true },
-  amount:     { type: Number, required: true },          // MMK to award
-  maxUses:    { type: Number, default: 1 },              // max redemptions (0 = unlimited)
-  usedBy:     [{ type: Number }],                        // telegramId list
-  isActive:   { type: Boolean, default: true },
-  createdAt:  { type: Date, default: Date.now }
-});
-redeemCodeSchema.index({ code: 1 });
-
 const User = mongoose.model('User', userSchema);
-const Deposit = mongoose.model('Deposit', depositSchema);
+
+// Withdrawal Request Schema
+const withdrawalSchema = new mongoose.Schema({
+    userId: Number,
+    username: String,
+    phone: String,
+    name: String,
+    amount: Number,
+    nrcFront: String,
+    nrcBack: String,
+    status: { type: String, default: 'pending' }, // pending, approved, rejected
+    createdAt: { type: Date, default: Date.now },
+    reviewedAt: Date,
+    reviewedBy: Number,
+    rejectReason: String,
+    verificationScreenshot: String,
+    amountDeducted: { type: Boolean, default: false } // ငွေနုတ်ပြီးလားဆိုတာ စစ်ရန်
+});
 const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
-const Game = mongoose.model('Game', gameSchema);
-const Settings = mongoose.model('Settings', settingsSchema);
-const RedeemCode = mongoose.model('RedeemCode', redeemCodeSchema);
 
-// ===== In-Memory =====
-const waitingQueue = [];
-const activeGames = new Map();
-const gameTurnTimeouts = new Map();
-const userSockets = new Map();
-const searchNotifications = new Map();
-const searchTimeouts = new Map(); // store timeouts for search expiry notifications
-
-// Store fake game IDs generated for fake search notifications
-const fakeGameIds = new Set();
-
-// ===== Concurrency & Spam Protection =====
-// FIX 1: Lock set – prevents double-click race on findGame
-const processingUsers = new Set();
-// FIX 5: Cooldown maps – prevent spam (ms timestamps)
-const moveCooldowns    = new Map();  // userId → lastMove timestamp
-const findGameCooldowns = new Map(); // userId → lastFindGame timestamp
-const MOVE_COOLDOWN_MS     = 300;   // 300ms between moves
-const FINDGAME_COOLDOWN_MS = 2000;  // 2s between findGame attempts
-
-// ===== Helpers =====
-function genRefCode(id) {
-  return 'TIC' + id.toString(36).toUpperCase() + Math.random().toString(36).substr(2,4).toUpperCase();
-}
-function genGameId() {
-  return 'g' + Date.now() + Math.random().toString(36).substr(2,5);
-}
-
-function verifyTgAuth(initData) {
-  if (!initData || !BOT_TOKEN) return null;
-  try {
-    const p = new URLSearchParams(initData);
-    const hash = p.get('hash');
-    if (!hash) return null;
-    const check = Array.from(p.entries())
-      .filter(([k]) => k !== 'hash')
-      .sort(([a],[b]) => a.localeCompare(b))
-      .map(([k,v]) => `${k}=${v}`).join('\n');
-    const secret = crypto.createHmac('sha256','WebAppData').update(BOT_TOKEN).digest();
-    const hmac = crypto.createHmac('sha256',secret).update(check).digest('hex');
-    if (hmac !== hash) return null;
-    const u = p.get('user');
-    return u ? JSON.parse(u) : null;
-  } catch { return null; }
-}
-
-function checkWin(board, sym) {
-  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
-  for (let r=0;r<5;r++) for (let c=0;c<5;c++) {
-    if (board[r][c] !== sym) continue;
-    for (const [dr,dc] of dirs) {
-      let cnt=1;
-      for (let i=1;i<4;i++) {
-        const nr=r+dr*i,nc=c+dc*i;
-        if (nr<0||nr>=5||nc<0||nc>=5||board[nr][nc]!==sym) break;
-        cnt++;
-      }
-      if (cnt>=4) return true;
-    }
-  }
-  return false;
-}
-function boardFull(board) { return board.every(r=>r.every(c=>c!=='')); }
-
-// ===== AI Config & Brain =====
-const AI_ID = -999999;
-const AI_NAMES = [
-  'Min Khant Kyaw','Thura Aung','Nay Chi Win','Su Myat Noe','Kyaw Zin Htet',
-  'Aye Chan Ko','Phyu Phyu Win','Kaung Myat Thu','Zaw_Lin_Htet','Myo_Min_Tun',
-  'Ei_Thandar_Phyu','Ko_Phyo_99','Mg_Kaung_Mandalay','Shine_Htet_Aung','AungKyaw2026',
-  'Htet_Naing_88','Khin_Su_112','Bo_Bo_Gyi_007','Thin_Zar_9','Kyaw_Kyaw_MM'
-];
-function randomAIName() { return AI_NAMES[Math.floor(Math.random()*AI_NAMES.length)]; }
-
-const AI_TYPE_EASY = 'easy';
-const AI_TYPE_SABOTAGE = 'sabotage';
-
-function wouldWin(board, r, c, sym) {
-  board[r][c] = sym;
-  const w = checkWin(board, sym);
-  board[r][c] = '';
-  return w;
-}
-function scoreBoard(board, sym, oppSym) {
-  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
-  let best = null, bestScore = -1;
-  for (let r=0;r<5;r++) for (let c=0;c<5;c++) {
-    if (board[r][c] !== '') continue;
-    let score = (2-Math.abs(r-2)) + (2-Math.abs(c-2));
-    for (const [dr,dc] of dirs) {
-      let cnt=0, blocked=false;
-      for (let i=-3;i<=3;i++) {
-        const nr=r+dr*i, nc=c+dc*i;
-        if (nr<0||nr>=5||nc<0||nc>=5) continue;
-        if (board[nr][nc]===sym) cnt++;
-        else if (board[nr][nc]===oppSym) { blocked=true; break; }
-      }
-      if (!blocked) score += cnt*3;
-    }
-    if (score > bestScore) { bestScore=score; best={r,c}; }
-  }
-  return best;
-}
-function aiPickMove(board, aiSym, humanSym) {
-  // 1) Win immediately
-  for (let r=0;r<5;r++) for (let c=0;c<5;c++) {
-    if (board[r][c]==='' && wouldWin(board,r,c,aiSym)) return {r,c};
-  }
-  // 2) Block human win
-  for (let r=0;r<5;r++) for (let c=0;c<5;c++) {
-    if (board[r][c]==='' && wouldWin(board,r,c,humanSym)) return {r,c};
-  }
-  // 3) Strategic score
-  const best = scoreBoard(board, aiSym, humanSym);
-  if (best) return best;
-  // 4) Fallback
-  for (let r=0;r<5;r++) for (let c=0;c<5;c++) {
-    if (board[r][c]==='') return {r,c};
-  }
-  return null;
-}
-
-// ===== Sabotage AI Game Functions =====
-async function startSabotageAIGame(socket, userId, gameId, userName) {
-  const u = await User.findOneAndUpdate(
-    { telegramId: userId, balance: { $gte: ENTRY_FEE }, isBanned: { $ne: true } },
-    { $inc: { balance: -ENTRY_FEE } },
-    { new: true }
-  );
-  if (!u) {
-    return socket.emit('insufficientBalance', { balance: 0, required: ENTRY_FEE });
-  }
-  const aiName = randomAIName();
-  const symbols = {};
-  if (Math.random() > 0.5) { symbols[userId]='X'; symbols[AI_ID]='O'; }
-  else { symbols[userId]='O'; symbols[AI_ID]='X'; }
-  const firstTurn = parseInt(Object.entries(symbols).find(([,v])=>v==='X')[0]);
-  const gameState = {
-    gameId, players:[userId, AI_ID], symbols,
-    board: Array(5).fill(null).map(()=>Array(5).fill('')),
-    currentTurn: firstTurn, status:'active', isAIGame:true,
-    aiType: AI_TYPE_SABOTAGE,
-    startedAt: Date.now(), lastMoveAt: Date.now(), // FIX 2: zombie tracking
-    playerNames: { [userId]: userName, [AI_ID]: aiName }
-  };
-  activeGames.set(gameId, gameState);
-  socket.join(gameId);
-  socket.emit('gameStarted', {
-    gameId, board: gameState.board, currentTurn: firstTurn,
-    players: gameState.playerNames, mySymbol: symbols[userId]
-  });
-  if (firstTurn === AI_ID) {
-    scheduleSabotageAIMove(gameId);
-  } else {
-    const t = setTimeout(() => handleTurnTimeoutAI(gameId, userId), TURN_SECONDS*1000+1500);
-    gameTurnTimeouts.set(gameId, t);
-  }
-  console.log('SABOTAGE AI game started:', gameId, 'User:', userId, 'vs AI:', aiName);
-}
-
-function scheduleSabotageAIMove(gameId) {
-  const thinkMs = 3000 + Math.random() * 2000;
-  setTimeout(async () => {
-    const game = activeGames.get(gameId);
-    if (!game || game.status !== 'active' || game.currentTurn !== AI_ID) return;
-    const humanId = game.players.find(p => p !== AI_ID);
-    const aiSym = game.symbols[AI_ID];
-    const humanSym = game.symbols[humanId];
-    const move = aiPickMove(game.board, aiSym, humanSym);
-    if (!move) return;
-    clearTurnTimer(gameId);
-    game.board[move.r][move.c] = aiSym;
-    io.to(gameId).emit('moveMade', { row:move.r, col:move.c, symbol:aiSym, playerId:AI_ID, board:game.board });
-    if (checkWin(game.board, aiSym)) {
-      await endGameAI(gameId, AI_ID, 'win');
-    } else if (boardFull(game.board)) {
-      await endGameAI(gameId, -1, 'draw');
-    } else {
-      game.currentTurn = humanId;
-      io.to(gameId).emit('turnChanged', { currentTurn: humanId });
-      const t = setTimeout(() => handleTurnTimeoutAI(gameId, humanId), TURN_SECONDS*1000+1500);
-      gameTurnTimeouts.set(gameId, t);
-    }
-  }, thinkMs);
-}
-
-async function endGameAI(gameId, winner, reason='normal') {
-  const game = activeGames.get(gameId);
-  if (!game || (game.status !== 'active' && game.status !== 'ending')) return;
-  clearTurnTimer(gameId);
-  game.status = 'completed';
-  const humanId = game.players.find(p => p !== AI_ID);
-  try {
-    if (winner === -1) {
-      if (humanId) await User.findOneAndUpdate({telegramId:humanId},{$inc:{balance:DRAW_REFUND,totalGames:1}});
-    } else if (winner === humanId) {
-      await User.findOneAndUpdate({telegramId:humanId},{$inc:{balance:WIN_PRIZE,wins:1,totalGames:1}});
-    } else {
-      if (humanId) await User.findOneAndUpdate({telegramId:humanId},{$inc:{losses:1,totalGames:1}});
-    }
-    await Game.findOneAndUpdate({gameId},{
-      winner, status:'completed', board:game.board,
-      playerNames: game.playerNames,
-      winnerName: winner===-1 ? 'draw' : (game.playerNames?.[winner] || String(winner)),
-      isAIGame: !!game.isAIGame
-    },{upsert:true});
-  } catch(e){ console.error('endGameAI err:', e); }
-  io.to(gameId).emit('gameOver', { winner, reason, board:game.board });
-  // FIX 4: Full memory cleanup for AI games
-  activeGames.delete(gameId);
-  clearTurnTimer(gameId);
-  const humanIdForCleanup = game.players.find(p => p !== AI_ID);
-  if (humanIdForCleanup) {
-    const t = searchTimeouts.get(humanIdForCleanup);
-    if (t) { clearTimeout(t); searchTimeouts.delete(humanIdForCleanup); }
-    moveCooldowns.delete(humanIdForCleanup);
-    findGameCooldowns.delete(humanIdForCleanup);
-    processingUsers.delete(humanIdForCleanup);
-  }
-}
-
-async function handleTurnTimeoutAI(gameId, playerId) {
-  const game = activeGames.get(gameId);
-  if (!game || game.status !== 'active' || game.currentTurn !== playerId) return;
-  if (playerId === AI_ID) {
-    scheduleSabotageAIMove(gameId);
-  } else {
-    await endGameAI(gameId, AI_ID, 'timeout');
-  }
-}
-
-// ===== Sabotage Helpers =====
-function checkWinAfterMove(board, r, c, sym) {
-  const boardCopy = board.map(row => [...row]);
-  boardCopy[r][c] = sym;
-  return checkWin(boardCopy, sym);
-}
-
-async function handleSabotage(game, userId, move) {
-  const rand = Math.random() * 100;
-  if (rand < 40) {
-    // Network Lag Error
-    io.to(game.gameId).emit('moveError', { message: '⚠️ Connection lost. Please check your internet.' });
-    await endGameAI(game.gameId, AI_ID, 'connectionLost');
-  } else if (rand < 70) {
-    // Time Warp
-    game.sabotageTimeWarp = true;
-    io.to(game.gameId).emit('turnTimerChanged', { seconds: 1 });
-    clearTurnTimer(game.gameId);
-    const t = setTimeout(async () => {
-      const g = activeGames.get(game.gameId);
-      if (g && g.status === 'active' && g.currentTurn === userId) {
-        await endGameAI(game.gameId, AI_ID, 'timeout');
-      }
-    }, 1000);
-    gameTurnTimeouts.set(game.gameId, t);
-  } else {
-    // Ghost Block
-    io.to(game.gameId).emit('moveError', { message: '⚠️ Network error. Please try again.' });
-    game.currentTurn = AI_ID;
-    io.to(game.gameId).emit('turnChanged', { currentTurn: AI_ID });
-    scheduleSabotageAIMove(game.gameId);
-  }
-}
-
-// ===== Settings Helpers =====
-async function getSetting(key, def) {
-  try { const s=await Settings.findOne({key}).lean(); return s?s.value:def; } catch { return def; }
-}
-async function setSetting(key,value) {
-  await Settings.findOneAndUpdate({key},{value},{upsert:true});
-}
-
-// ===== Bot =====
-let bot = null;
-if (BOT_TOKEN) {
-  bot = new Telegraf(BOT_TOKEN);
-
-  const CHANNEL_USERNAME = 'EzMoneyPayy'; // channel username without @
-  const CHANNEL_LINK = 'https://t.me/EzMoneyPayy';
-
-  async function isChannelMember(userId) {
+// --- 5. Reward API for Mini App (Adsgram အတွက်) ---
+app.all('/reward-user', async (req, res) => {
     try {
-      const member = await bot.telegram.getChatMember(`@${CHANNEL_USERNAME}`, userId);
-      return ['member','administrator','creator'].includes(member.status);
-    } catch(e) { return false; }
-  }
+        const userId = req.query.userId || req.body.userId;
+        if (!userId) {
+            return res.status(400).send('User ID required');
+        }
+        const user = await User.findOne({ tgId: Number(userId) });
+        if (user) {
+            user.balance += 500;
+            await user.save();
+            try {
+                await bot.telegram.sendMessage(userId, "💰 ကြော်ငြာကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!");
+            } catch (e) {}
+            return res.json({ success: true, newBalance: user.balance });
+        }
+        res.status(404).send('User not found');
+    } catch (error) {
+        res.status(500).send('Internal Error');
+    }
+});
 
-  bot.start(async (ctx) => {
+// Balance ပြရန် API (index.html အတွက်)
+app.post('/get-balance', async (req, res) => {
     try {
-      const id = ctx.from.id;
-      const args = ctx.payload;
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const user = await User.findOne({ tgId: userId });
+        if (user) {
+            return res.json({ balance: user.balance });
+        }
+        res.json({ balance: 0 });
+    } catch (error) {
+        res.status(500).json({ error: 'Internal Error' });
+    }
+});
 
-      const maint = await getSetting('maintenance', false);
-      if (maint && id !== ADMIN_ID) {
+app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
+
+// --- Channel ၂ ခုစလုံး ထားရှိရန် ---
+const CHANNELS = ['@BitCoinMyannmar', '@BitCoinMyan']; // Channel ၂ ခုစလုံး
+
+// --- 6. Helpers ---
+async function isJoined(ctx) {
+    for (const ch of CHANNELS) {
         try {
-          await ctx.reply('🔧 ဆာဗာ ပြင်ဆင်နေသောကြောင့် ယာယီပိတ်ထားပါသည်။');
+            const member = await ctx.telegram.getChatMember(ch, ctx.from.id);
+            if (['left', 'kicked'].includes(member.status)) return false;
+        } catch (e) { 
+            console.error(`Channel check error for ${ch}:`, e);
+            return false; 
+        }
+    }
+    return true;
+}
+
+const isAdmin = (ctx) => String(ctx.from.id) === ADMIN_ID;
+
+bot.catch((err, ctx) => {
+    console.error(`⚠️ Telegram Error (${ctx.updateType}): ${err.message}`);
+});
+
+// --- 7. Keyboards ---
+const mainMenu = Markup.keyboard([
+    ['💰 လက်ကျန်ငွေ', '👫 ဖိတ်ခေါ်ရန်'],
+    [Markup.button.webApp('💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်', 'https://bitcoin-bot-2zmf.onrender.com')],
+    ['🗂 Wallet', '🎁 Bonus'],
+    ['📤 ငွေထုတ်ယူရန်']
+]).resize();
+
+// --- 8. Start Command ---
+bot.start(async (ctx) => {
+    try {
+        let user = await User.findOne({ tgId: ctx.from.id });
+        const payload = ctx.payload;
+        const refId = payload ? parseInt(payload) : null;
+
+        if (!user) {
+            user = new User({ 
+                tgId: ctx.from.id, 
+                username: ctx.from.first_name || 'User' 
+            });
+            if (refId && refId !== ctx.from.id) user.referredBy = refId;
+            await user.save();
+        }
+
+        if (user.isBanned) return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(()=>{});
+
+        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @BitCoinMyannmar\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+
+        await ctx.reply(msg, Markup.inlineKeyboard([
+            [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/BitCoinMyannmar')],
+            [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
+            [Markup.button.callback('✅ Joined', 'check_join')]
+        ])).catch(()=>{});
+    } catch (e) { console.error(e); }
+});
+
+bot.action('check_join', async (ctx) => {
+    try {
+        if (await isJoined(ctx)) {
+            const user = await User.findOne({ tgId: ctx.from.id });
+            
+            // Referral Bonus Logic - Channel ၂ ခုလုံး join ထားမှသာ ရမည်
+            if (user && user.referredBy && !user.hasReceivedReferralBonus) {
+                const refUser = await User.findOne({ tgId: user.referredBy });
+                if (refUser) {
+                    // Referrer ကို 5000 ကျပ် ပေါင်းပေး
+                    await User.updateOne(
+                        { tgId: user.referredBy }, 
+                        { $inc: { balance: 5000, referralCount: 1 } }
+                    );
+                    
+                    // Referrer ကို အကြောင်းကြား
+                    try { 
+                        await bot.telegram.sendMessage(
+                            refUser.tgId, 
+                            `🎉 ဂုဏ်ယူပါတယ်! လူသစ်တစ်ယောက်ဖိတ်ခေါ်မှုအောင်မြင်ပြီး 5000 ကျပ် ရရှိပါသည်!\n\n` +
+                            `လက်ကျန်: ${refUser.balance + 5000} ကျပ်`
+                        ); 
+                    } catch (err) {}
+                    
+                    // New user ကိုလည်း Bonus ပေး (Optional)
+                    user.balance += 5000;
+                }
+                
+                // Referral Bonus ရပြီးကြောင်း မှတ်သား
+                user.hasReceivedReferralBonus = true;
+                user.referredBy = null;
+                await user.save();
+            } else if (user && user.referredBy && user.hasReceivedReferralBonus) {
+                // Bonus ရပြီးသားဆိုရင် referredBy ကိုပဲ ရှင်းပေး
+                user.referredBy = null;
+                await user.save();
+            }
+            
+            try { await ctx.deleteMessage(); } catch (e) {}
+            await ctx.reply("🏡 မင်္ဂလာပါ! Main Menu မှာ ရွေးချယ်ပါ ✨", mainMenu).catch(()=>{});
+        } else {
+            await ctx.answerCbQuery("⚠️ Channel (၂) ခုလုံးကို Join ရပါမည်!", { show_alert: true }).catch(()=>{});
+        }
+    } catch (e) { console.error(e); }
+});
+
+// --- 9. Main Menu Buttons ---
+bot.hears('💰 လက်ကျန်ငွေ', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    if (user) ctx.reply(`🙌🏻 အသုံးပြုသူ = ${user.username}\n💰 လက်ကျန်ငွေ = ${user.balance.toLocaleString()} ကျပ်\n\n🪢 ပိုပြီး ရနိုင်ရန် မိတ်ဆွေ ဖိတ်ပါ ✨`).catch(()=>{});
+});
+
+bot.hears('👫 ဖိတ်ခေါ်ရန်', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    const botMe = await bot.telegram.getMe();
+    const refLink = `https://t.me/${botMe.username}?start=${ctx.from.id}`;
+    const shareText = `@bitcoinminingmyanmar_bot Bitcoin Bot !🔥\n\n🎁လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁လူ 10 ယောက်ခေါ် → +50000ကျပ် 🔥\n\nငါ့ရဲ့ Invite Link က ${refLink} ဖြစ်ပါတယ်`;
+
+    const msg = `🙌🏻 သင့်စုစုပေါင်း ဖိတ်ခေါ်ထားသူ = ${user.referralCount} User(s)\n🙌🏻 သင့်ဖိတ်ခေါ်ရန် Link = ${refLink}\n\n🪢 ဖိတ်ခေါ်ပြီး 5000 ကျပ် ရယူနိုင်ပါသည်\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡\n🔋 နေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯 မြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !🔥\n\n🎁လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥သူငယ်ချင်းတွေရဲ့ ဝယ်ယူမှုတိုင်းအတွက် ကော်မရှင် 80% အထိရ\n✅သင့် Wave/KPay ဆီသို့ ငွေတန်းထုတ်နိုင်တယ်\n\n🎯 ငါ့လင့်ကနေ ဝင်ပြီး ဘောနပ် 5000ကျပ် ယူလိုက်ပါ`;
+
+    await ctx.reply(msg, Markup.inlineKeyboard([
+        [Markup.button.callback('👥 ဖိတ်ခေါ်ထားသောသူများ', 'my_refs')],
+        [Markup.button.callback('🏆 Top List', 'top_list')],
+        [Markup.button.switchToChat('🚀 Bot Link ကို Share ပါ', shareText)]
+    ])).catch(()=>{});
+});
+
+bot.action('my_refs', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    await ctx.reply(`👤 သင့်မှာ ဖိတ်ခေါ်ထားသူ ${user.referralCount} ဦး ရှိပါသည်။`).catch(()=>{});
+    await ctx.answerCbQuery();
+});
+
+bot.action('top_list', async (ctx) => {
+    const topUsers = await User.find().sort({ referralCount: -1 }).limit(10);
+    let text = "🔥 <b>အကောင်းဆုံး Referral Users List</b> 🔥\n\n";
+    topUsers.forEach((u, i) => { text += `${i + 1}. ${u.username || 'User'} : 👨 ${u.referralCount} ယောက်\n`; });
+    await ctx.reply(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([Markup.button.callback('🔙 နောက်သို့', 'back_to_menu')]) }).catch(()=>{});
+    await ctx.answerCbQuery();
+});
+
+bot.hears('🗂 Wallet', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    await ctx.reply(`💡 သင့်လက်ရှိ Wallet နံပါတ်: ${user.wallet}\n\n💠 Wallet သတ်မှတ် / ပြင်ဆင် 💠 နှိပ်ပါ`, Markup.inlineKeyboard([[Markup.button.callback('💠 Wallet ပြင်ဆင်ပါ', 'set_wallet')]]));
+});
+
+bot.action('set_wallet', async (ctx) => {
+    await User.updateOne({ tgId: ctx.from.id }, { state: 'wait_wallet' });
+    ctx.reply("✏️ Now Send Your Kpay/Wave Number and Name To Use It For Future Withdrawals").catch(()=>{});
+});
+
+bot.hears('🎁 Bonus', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    const now = new Date();
+    if (user.lastBonus && (now - user.lastBonus < 86400000)) return ctx.reply("⏳ ၂၄ နာရီအတွင်း တစ်ကြိမ်သာ ရနိုင်ပါသည်။").catch(()=>{});
+    const bonus = Math.floor(Math.random() * (10000 - 500 + 1)) + 500;
+    user.balance += bonus;
+    user.lastBonus = now;
+    await user.save();
+    ctx.reply(`🎉 သင် ${bonus} ကျပ် ရရှိလိုက်ပြီ ဖြစ်ပါသည်။`).catch(()=>{});
+});
+
+// ==================== ငွေထုတ်ခြင်း အဆင့်များ ====================
+bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
+    const user = await User.findOne({ tgId: ctx.from.id });
+    if (!user) return;
+    if (user.isBanned) return;
+    
+    // Channel ၂ ခုလုံး Join ထားရဲ့လား ထပ်စစ်
+    if (!(await isJoined(ctx))) {
+        return ctx.reply("⚠️ ငွေထုတ်ယူရန်အတွက် Channel ၂ ခုလုံးကို Join ထားရပါမည်။").catch(()=>{});
+    }
+    
+    if (user.balance < 100000) return ctx.reply("⚠ သင်ထုတ်ယူနိုင်ရန်အနည်းဆုံး 100,000 ကျပ် ရှိရပါမည်").catch(()=>{});
+    user.state = 'withdraw_phone';
+    await user.save();
+    ctx.reply("📱 ငွေထုတ်ယူမည့် Kpay/Wave ဖုန်းနံပါတ်ကို ပို့ပေးပါ (ဂဏန်းသီးသန့်) 👇").catch(()=>{});
+});
+
+// ==================== ADMIN COMMANDS ====================
+bot.command('panel', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const total = await User.countDocuments();
+    const pendingWithdrawals = await Withdrawal.countDocuments({ status: 'pending' });
+    let msg = `👑 <b>Super Admin Panel</b>\n\n📊 Total Users: ${total}\n⏳ Pending Withdrawals: ${pendingWithdrawals}\n\n`;
+    msg += `🔹 <code>/users [page]</code> - စာမျက်နှာအလိုက် user စာရင်း\n`;
+    msg += `🔹 <code>/user [user_id]</code> - user အချက်အလက်ကြည့်\n`;
+    msg += `🔹 <code>/add [user_id] [ငွေပမာဏ]</code> - ငွေတိုး\n`;
+    msg += `🔹 <code>/sub [user_id] [ငွေပမာဏ]</code> - ငွေလျှော့\n`;
+    msg += `🔹 <code>/addref [user_id] [အရေအတွက်]</code> - referral အရေအတွက်တိုး\n`;
+    msg += `🔹 <code>/subref [user_id] [အရေအတွက်]</code> - referral လျှော့\n`;
+    msg += `🔹 <code>/ban [user_id]</code> - ပိတ်ပင်မယ်\n`;
+    msg += `🔹 <code>/unban [user_id]</code> - ပြန်ဖွင့်မယ်\n`;
+    msg += `🔹 <code>/send [user_id] [စာသား]</code> - တစ်ဦးချင်းစာပို့\n`;
+    msg += `🔹 <code>/sendbatch [အရေအတွက်(<=50)] [စာသား]</code> - နောက်ဆုံး active users ကို batch ပို့\n`;
+    msg += `🔹 <code>/broadcast [စာသား]</code> - အားလုံးကိုပို့ (သတိထားပါ)\n`;
+    msg += `🔹 <code>/withdrawals</code> - ဆိုင်းငံ့ထားသော ငွေထုတ်မှုများ\n`;
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+});
+
+// /users [page] - user list
+bot.command('users', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    let page = 1;
+    if (args.length > 1) page = parseInt(args[1]) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
+    const users = await User.find().skip(skip).limit(limit).sort({ tgId: 1 });
+    const total = await User.countDocuments();
+    let msg = `👥 <b>User List (Page ${page}/${Math.ceil(total/limit)})</b>\n\n`;
+    users.forEach(u => {
+        msg += `🆔 <code>${u.tgId}</code> | ${u.username || 'NoName'} | 💰${u.balance} | 👥${u.referralCount} | ${u.isBanned ? '🚫Banned' : '✅'}\n`;
+    });
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+});
+
+// /user [user_id]
+bot.command('user', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply("⚠️ user_id ထည့်ပါ။\n/user 123456789");
+    const userId = parseInt(args[1]);
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    const msg = `👤 <b>User Info</b>\n\n` +
+                `🆔 ID: <code>${user.tgId}</code>\n` +
+                `👤 Name: ${user.username || 'N/A'}\n` +
+                `💰 Balance: ${user.balance} ကျပ်\n` +
+                `👫 Referrals: ${user.referralCount}\n` +
+                `🗂 Wallet: ${user.wallet}\n` +
+                `🚫 Banned: ${user.isBanned ? 'Yes' : 'No'}\n` +
+                `🎁 Referral Bonus Received: ${user.hasReceivedReferralBonus ? 'Yes' : 'No'}\n` +
+                `📅 Last Bonus: ${user.lastBonus ? user.lastBonus.toLocaleString() : 'None'}\n` +
+                `🕒 Last Active: ${user.lastActive ? user.lastActive.toLocaleString() : 'Never'}`;
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+});
+
+// /add [user_id] [amount]
+bot.command('add', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) return ctx.reply("⚠️ /add [user_id] [ငွေပမာဏ]");
+    const userId = parseInt(args[1]);
+    const amount = parseInt(args[2]);
+    if (isNaN(amount) || amount <= 0) return ctx.reply("❌ ငွေပမာဏ မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    user.balance += amount;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ကို ${amount} ကျပ် ပေါင်းထည့်ပြီးပါပြီ။ လက်ကျန်: ${user.balance}`);
+    try { await bot.telegram.sendMessage(userId, `💰 သင့်အကောင့်ထဲသို့ ${amount} ကျပ် ပေါင်းထည့်လိုက်ပါသည်။ လက်ကျန်: ${user.balance}`); } catch(e){}
+});
+
+// /sub [user_id] [amount]
+bot.command('sub', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) return ctx.reply("⚠️ /sub [user_id] [ငွေပမာဏ]");
+    const userId = parseInt(args[1]);
+    const amount = parseInt(args[2]);
+    if (isNaN(amount) || amount <= 0) return ctx.reply("❌ ငွေပမာဏ မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    if (user.balance < amount) return ctx.reply("❌ User ရဲ့လက်ကျန်မလုံလောက်ပါ။");
+    user.balance -= amount;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ထံမှ ${amount} ကျပ် နုတ်ယူပြီးပါပြီ။ လက်ကျန်: ${user.balance}`);
+    try { await bot.telegram.sendMessage(userId, `💸 သင့်အကောင့်မှ ${amount} ကျပ် နုတ်ယူလိုက်ပါသည်။ လက်ကျန်: ${user.balance}`); } catch(e){}
+});
+
+// /addref [user_id] [count]
+bot.command('addref', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) return ctx.reply("⚠️ /addref [user_id] [အရေအတွက်]");
+    const userId = parseInt(args[1]);
+    const count = parseInt(args[2]);
+    if (isNaN(count) || count <= 0) return ctx.reply("❌ အရေအတွက် မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    user.referralCount += count;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ၏ referral count ကို ${count} တိုးပြီးပါပြီ။ စုစုပေါင်း: ${user.referralCount}`);
+    try { await bot.telegram.sendMessage(userId, `👥 သင့်ရဲ့ referral အရေအတွက် ${count} တိုးလာပါသည်။ စုစုပေါင်း: ${user.referralCount}`); } catch(e){}
+});
+
+// /subref [user_id] [count]
+bot.command('subref', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 3) return ctx.reply("⚠️ /subref [user_id] [အရေအတွက်]");
+    const userId = parseInt(args[1]);
+    const count = parseInt(args[2]);
+    if (isNaN(count) || count <= 0) return ctx.reply("❌ အရေအတွက် မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    if (user.referralCount < count) return ctx.reply("❌ User ရဲ့ referral count မလုံလောက်ပါ။");
+    user.referralCount -= count;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ၏ referral count ကို ${count} လျှော့ပြီးပါပြီ။ စုစုပေါင်း: ${user.referralCount}`);
+    try { await bot.telegram.sendMessage(userId, `👥 သင့်ရဲ့ referral အရေအတွက် ${count} လျှော့ချခံရပါသည်။ စုစုပေါင်း: ${user.referralCount}`); } catch(e){}
+});
+
+// /ban [user_id]
+bot.command('ban', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply("⚠️ /ban [user_id]");
+    const userId = parseInt(args[1]);
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    if (user.isBanned) return ctx.reply("✅ User already banned.");
+    user.isBanned = true;
+    user.state = 'none';
+    user.tempData = {};
+    await user.save();
+    await ctx.reply(`🚫 User ${userId} ကို ban လိုက်ပါပြီ။`);
+    try { await bot.telegram.sendMessage(userId, "🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။"); } catch(e){}
+});
+
+// /unban [user_id]
+bot.command('unban', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const args = ctx.message.text.split(' ');
+    if (args.length < 2) return ctx.reply("⚠️ /unban [user_id]");
+    const userId = parseInt(args[1]);
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    if (!user.isBanned) return ctx.reply("✅ User is not banned.");
+    user.isBanned = false;
+    await user.save();
+    await ctx.reply(`✅ User ${userId} ကို unban လိုက်ပါပြီ။`);
+    try { await bot.telegram.sendMessage(userId, "✅ သင့်အကောင့်ကို ပြန်လည်အသုံးပြုခွင့်ပေးလိုက်ပါပြီ။"); } catch(e){}
+});
+
+// /send [user_id] [message]
+bot.command('send', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const text = ctx.message.text;
+    const firstSpace = text.indexOf(' ');
+    if (firstSpace === -1) return ctx.reply("⚠️ /send [user_id] [message]");
+    const rest = text.substring(firstSpace + 1).trim();
+    const secondSpace = rest.indexOf(' ');
+    if (secondSpace === -1) return ctx.reply("⚠️ /send [user_id] [message]");
+    const userIdStr = rest.substring(0, secondSpace);
+    const msgText = rest.substring(secondSpace + 1).trim();
+    const userId = parseInt(userIdStr);
+    if (isNaN(userId)) return ctx.reply("❌ user_id မှားယွင်းနေပါသည်။");
+    const user = await User.findOne({ tgId: userId });
+    if (!user) return ctx.reply("❌ User not found.");
+    try {
+        await bot.telegram.sendMessage(userId, msgText);
+        await ctx.reply(`✅ Message sent to ${userId}`);
+    } catch (e) {
+        await ctx.reply(`❌ Failed to send: ${e.message}`);
+    }
+});
+
+// /sendbatch [count] [message]  (max 50)
+bot.command('sendbatch', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const text = ctx.message.text;
+    const firstSpace = text.indexOf(' ');
+    if (firstSpace === -1) return ctx.reply("⚠️ /sendbatch [count] [message]");
+    const rest = text.substring(firstSpace + 1).trim();
+    const secondSpace = rest.indexOf(' ');
+    if (secondSpace === -1) return ctx.reply("⚠️ /sendbatch [count] [message]");
+    const countStr = rest.substring(0, secondSpace);
+    const msgText = rest.substring(secondSpace + 1).trim();
+    const count = parseInt(countStr);
+    if (isNaN(count) || count < 1 || count > 50) return ctx.reply("❌ count သည် 1 နှင့် 50 ကြားဖြစ်ရပါမည်။");
+    
+    const users = await User.find({ isBanned: false }).sort({ lastActive: -1 }).limit(count);
+    if (users.length === 0) return ctx.reply("❌ No active users found.");
+    
+    await ctx.reply(`📨 စတင် batch ပို့နေပါသည်... (ဦးရေ: ${users.length})`);
+    let success = 0, fail = 0;
+    for (const u of users) {
+        try {
+            await bot.telegram.sendMessage(u.tgId, msgText);
+            success++;
+            await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (e) {
-          console.error(`Failed to send maintenance message to ${id}:`, e.message);
+            fail++;
         }
-        return;
-      }
+    }
+    await ctx.reply(`✅ Batch send complete.\n✅ Success: ${success}\n❌ Failed: ${fail}`);
+});
 
-      let user = await User.findOne({ telegramId: id });
-      if (!user) {
-        user = new User({
-          telegramId: id,
-          username: ctx.from.username||'',
-          firstName: ctx.from.first_name||'',
-          referralCode: genRefCode(id)
-        });
-        if (args && args.length > 3) {
-          const ref = await User.findOne({ referralCode: args }).lean();
-          if (ref && ref.telegramId !== id) user.referredBy = ref.telegramId;
+// /broadcast
+bot.command('broadcast', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const msgText = ctx.message.text.split('/broadcast ')[1];
+    if (!msgText) return ctx.reply("⚠️ စာသားထည့်ပါ။");
+    const users = await User.find({ isBanned: false });
+    await ctx.reply(`📨 စတင် broadcast ပို့နေပါသည်... (ဦးရေ: ${users.length})`);
+    let success = 0, fail = 0;
+    for (const u of users) {
+        try {
+            await bot.telegram.sendMessage(u.tgId, msgText);
+            success++;
+            await new Promise(resolve => setTimeout(resolve, 50));
+        } catch (e) {
+            fail++;
         }
-        await user.save();
-      }
-
-      const isMember = await isChannelMember(id);
-      if (!isMember) {
-        await ctx.reply(
-          `👋 မင်္ဂလာပါ ${ctx.from.first_name}!\n\n🎮 ကစားရန် ဦးစွာ Channel ကို Join ဖြစ်ရပါမည်!\n\n📢 Join ပြုလုပ်ပြီးနောက် <b>/start</b> ကို ထပ်နှိပ်ပါ`,
-          {
-            parse_mode: 'HTML',
-            ...Markup.inlineKeyboard([
-              [Markup.button.url('📢 Channel Join ရန်', CHANNEL_LINK)],
-              [Markup.button.callback('✅ Join ပြီးပြီ — စစ်ဆေးပါ', 'check_join')]
-            ])
-          }
-        ).catch(()=>{});
-        return;
-      }
-
-      await ctx.reply(
-        `🎮 မင်္ဂလာပါ ${ctx.from.first_name}!\n\n💰 လက်ကျန်: ${user.balance.toLocaleString()} MMK\n🏆 နိုင်: ${user.wins}  •  ❌ ရှုံး: ${user.losses}`,
-        Markup.inlineKeyboard([
-          [Markup.button.webApp('🎮 PLAY NOW', FRONTEND_URL)],
-          [Markup.button.callback('💰 Balance','bal'), Markup.button.callback('🔗 Referral','ref')]
-        ])
-      ).catch(()=>{});
-    } catch(e) {
-      console.error('Error in /start:', e.stack || e);
-      ctx.reply('⚠️ ဆာဗာ ချိတ်ဆက်မှု ပြဿနာ').catch(()=>{});
     }
-  });
+    ctx.reply(`✅ Broadcast done.\n✅ Success: ${success}\n❌ Failed: ${fail}`);
+});
 
-  bot.action('check_join', async (ctx) => {
+// /withdrawals - ဆိုင်းငံ့ငွေထုတ်မှုများကိုပြရန်
+bot.command('withdrawals', async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const pending = await Withdrawal.find({ status: 'pending' }).sort({ createdAt: -1 });
+    if (pending.length === 0) return ctx.reply("✅ ဆိုင်းငံ့ငွေထုတ်မှု မရှိပါ။");
+    let msg = `⏳ **ဆိုင်းငံ့ငွေထုတ်မှုများ** (${pending.length})\n\n`;
+    pending.forEach((w, i) => {
+        msg += `${i+1}. ID: ${w.userId} | ${w.name} | ${w.amount} ကျပ် | ${new Date(w.createdAt).toLocaleString()}\n`;
+    });
+    await ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+// ==================== WITHDRAWAL APPROVAL SYSTEM ====================
+
+// Admin က approve/reject လုပ်ဖို့ callback buttons
+bot.action(/^approve_withdraw_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const withdrawId = ctx.match[1];
+    const withdrawal = await Withdrawal.findById(withdrawId);
+    if (!withdrawal) return ctx.answerCbQuery("❌ ငွေထုတ်မှုမတွေ့ပါ။");
+    if (withdrawal.status !== 'pending') return ctx.answerCbQuery("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
+
+    const user = await User.findOne({ tgId: withdrawal.userId });
+    if (!user) return ctx.answerCbQuery("❌ User မတွေ့ပါ။");
+
+    withdrawal.status = 'approved';
+    withdrawal.reviewedAt = new Date();
+    withdrawal.reviewedBy = ctx.from.id;
+    await withdrawal.save();
+
+    // Notify user
+    const totalAmount = withdrawal.amount + 3000;
     try {
-      await ctx.answerCbQuery('စစ်ဆေးနေပါသည်...').catch(()=>{});
-      const id = ctx.from.id;
-      const isMember = await isChannelMember(id);
-      if (!isMember) {
-        await ctx.reply(
-          `❌ Channel Join မပြုလုပ်ရသေးပါ!\n\nChannel ကို Join ပြုလုပ်ပြီးမှ ထပ်စစ်ဆေးပါ 👇`,
-          Markup.inlineKeyboard([
-            [Markup.button.url('📢 Channel Join ရန်', CHANNEL_LINK)],
-            [Markup.button.callback('✅ Join ပြီးပြီ — စစ်ဆေးပါ', 'check_join')]
-          ])
-        ).catch(()=>{});
-        return;
-      }
-      const user = await User.findOne({ telegramId: id }).lean();
-      if (!user) {
-        await ctx.reply('⚠️ /start ကိုနှိပ်ပါ').catch(()=>{});
-        return;
-      }
-      await ctx.reply(
-        `✅ Channel Join အောင်မြင်သည်!\n\n🎮 မင်္ဂလာပါ ${ctx.from.first_name}!\n💰 လက်ကျန်: ${user.balance.toLocaleString()} MMK\n🏆 နိုင်: ${user.wins}  •  ❌ ရှုံး: ${user.losses}`,
-        Markup.inlineKeyboard([
-          [Markup.button.webApp('🎮 PLAY NOW', FRONTEND_URL)],
-          [Markup.button.callback('💰 Balance','bal'), Markup.button.callback('🔗 Referral','ref')]
-        ])
-      ).catch(()=>{});
-    } catch(e) {
-      console.error('check_join error:', e.stack || e);
-    }
-  });
-
-  bot.action('bal', async (ctx) => {
-    try {
-      await ctx.answerCbQuery().catch(()=>{});
-      const u = await User.findOne({ telegramId: ctx.from.id }).lean();
-      if (!u) return;
-      await ctx.reply(`💰 လက်ကျန်: ${u.balance.toLocaleString()} MMK\n🎮 ကစားမှု: ${u.totalGames}\n🏆 နိုင်: ${u.wins}  •  ❌ ရှုံး: ${u.losses}`,
-        Markup.inlineKeyboard([[Markup.button.webApp('🎮 ကစားမည်', FRONTEND_URL)]])
-      ).catch(()=>{});
-    } catch(e) { console.error('bal error:', e.stack || e); }
-  });
-
-  bot.action('ref', async (ctx) => {
-    try {
-      await ctx.answerCbQuery().catch(()=>{});
-      const u = await User.findOne({ telegramId: ctx.from.id }).lean();
-      if (!u) return;
-      const link = `https://t.me/${BOT_USERNAME}?start=${u.referralCode}`;
-      await ctx.reply(
-        `🔗 <b>Referral Link</b>\n\nသူငယ်ချင်း တစ်ယောက် 1,000 MMK ဖြည့်တိုင်း သင် <b>100 MMK</b> ရမည်!\n\n<code>${link}</code>`,
-        { parse_mode:'HTML', ...Markup.inlineKeyboard([[
-          Markup.button.url('📤 Share', `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('🎮 TicToeTic ကစားပြီးငွေရှာကြစို့!')}`)
-        ]])}
-      ).catch(()=>{});
-    } catch(e) { console.error('ref error:', e.stack || e); }
-  });
-
-  bot.action(/^join_(.+)$/, async (ctx) => {
-    try {
-      await ctx.answerCbQuery('ချိတ်ဆက်နေပါသည်...').catch(()=>{});
-      const gameId = ctx.match[1];
-      const id = ctx.from.id;
-
-      try { await ctx.deleteMessage(); } catch(e){}
-
-      const user = await User.findOne({ telegramId: id }).lean();
-      if (!user) {
-        await ctx.reply('ဦးစွာ /start နှိပ်ပါ').catch(()=>{});
-        return;
-      }
-      if (user.balance < ENTRY_FEE) {
-        await ctx.reply(
-          `⚠️ ငွေမလုံလောက်ပါ!\n\nပွဲဝင်ကြေး: ${ENTRY_FEE.toLocaleString()} MMK\nသင့်ကျန်: ${user.balance.toLocaleString()} MMK`,
-          Markup.inlineKeyboard([[Markup.button.webApp('💰 ငွေဖြည့်ရန်', FRONTEND_URL)]])
-        ).catch(()=>{});
-        return;
-      }
-      await ctx.reply(
-        '✅ ပွဲတွင် ဝင်ရောက်ရန် Join ကိုနှိပ်ပါ',
-        Markup.inlineKeyboard([[Markup.button.webApp('🎮 JOIN NOW', `${FRONTEND_URL}/play.html?join=${gameId}`)]])
-      ).catch(()=>{});
-    } catch(e) { console.error('join action err:', e.stack || e); }
-  });
-
-  bot.action('dismiss', async (ctx) => {
-    try { await ctx.answerCbQuery().catch(()=>{}); await ctx.deleteMessage().catch(()=>{}); } catch(e){}
-  });
-
-  bot.command('admin', async (ctx) => {
-    try {
-      const id = ctx.from.id;
-      if (!ADMIN_ID || id !== ADMIN_ID) {
-        await ctx.reply('🚫 Admin အကောင့်မဟုတ်ပါ။').catch(()=>{});
-        return;
-      }
-      await ctx.reply(
-        `🛡️ <b>Admin Panel</b>\n\nမင်္ဂလာပါ Admin!\n\nAdmin Panel သို့ဝင်ရောက်ရန် ↓`,
-        {
-          parse_mode: 'HTML',
-          ...Markup.inlineKeyboard([
-            [Markup.button.webApp('🛡️ Admin Panel ဝင်ရန်', `${FRONTEND_URL}/admin.html`)],
-          ])
-        }
-      ).catch(()=>{});
-    } catch(e) { console.error('admin cmd err:', e.stack || e); }
-  });
-
-  bot.catch((err, ctx) => {
-    if (err.response && err.response.error_code === 403) {
-      console.log(`User ${ctx?.from?.id || 'unknown'} blocked the bot.`);
-    } else {
-      console.error('Bot global error:', err, ctx?.update);
-    }
-  });
-
-  bot.launch().then(()=>console.log('✅ Bot launched')).catch(e=>console.error('Bot launch err:',e));
-}
-
-// ===== Notify All Users (with obfuscated username) =====
-function obfuscateUsername(username) {
-  if (!username) return '';
-  if (username.length <= 3) return username;
-  return username.substring(0, 3) + '...';
-}
-
-async function notifyUsersGameSearch(searcherId, gameId) {
-  if (!bot) return;
-  try {
-    // ① DB queries တပြိုင်နက် run (parallel)
-    const [searcher, allUsers] = await Promise.all([
-      User.findOne({ telegramId: searcherId }).select('firstName username').lean(),
-      User.find({ telegramId: { $ne: searcherId }, isBanned: { $ne: true } }).select('telegramId lastActive').lean()
-    ]);
-
-    const displayName = searcher?.username
-      ? obfuscateUsername(searcher.username)
-      : (searcher?.firstName || 'တစ်ယောက်');
-
-    const msgText = `⚡ <b>${displayName}</b> ပွဲရှာနေသည်!\n\n⏱ ${SEARCH_TIMEOUT_S} စက္ကန့်အတွင်း Join မနှိပ်ရင် ပွဲပျောက်မည်\n💰 ဝင်ကြေး: ${ENTRY_FEE.toLocaleString()} MMK  •  🏆 ဆု: ${WIN_PRIZE.toLocaleString()} MMK`;
-    const replyMarkup = { inline_keyboard: [[
-      { text:'🎮 ကစားမည်', callback_data:`join_${gameId}` },
-      { text:'❌ မကစားဘူး', callback_data:'dismiss' }
-    ]]};
-
-    // ② Online (socket ချိတ်ဆက်ထားသူ) နဲ့ Offline ကို ခွဲ
-    //    Offline users ကို lastActive DESC အစဉ်အလိုက် sort (မကြာသေးမီ active user ကို အရင်ပို့)
-    const onlineUsers  = allUsers.filter(u => userSockets.has(u.telegramId));
-    const offlineUsers = allUsers
-      .filter(u => !userSockets.has(u.telegramId))
-      .sort((a, b) => (b.lastActive||0) - (a.lastActive||0));
-
-    const sent = [];
-
-    // ③ ONLINE users → ချက်ချင်း တပြိုင်နက် ပို့ (delay မပါ)
-    const onlineResults = await Promise.allSettled(onlineUsers.map(async u => {
-      try {
-        const msg = await bot.telegram.sendMessage(u.telegramId, msgText,
-          { parse_mode:'HTML', reply_markup: replyMarkup }
+        await bot.telegram.sendMessage(withdrawal.userId, 
+            `လူကြီးမင်း ထုတ်ယူထားသော ငွေပမာဏနှင့် Verification Fee စုစုပေါင်း ${totalAmount.toLocaleString()} ကျပ် ကို လူကြီးမင်း၏ Kpay/Wave အကောင့်ထဲသို့ အောင်မြင်စွာ လွှဲပြောင်းပေးလိုက်ပါပြီ။ ပြေစာ (Receipt) ကိုလည်း အခုပဲ ပူးတွဲပို့ပေးလိုက်ပါတယ်ဗျာ။\n\n` +
+            `ကျွန်တော်တို့ Bitcoin Mining Myanmar နဲ့အတူ အလုပ်ကြိုးစားပေးတဲ့အတွက် ကျေးဇူးအထူးတင်ရှိပါတယ်။ မိတ်ဆွေတို့ရဲ့ သူငယ်ချင်းတွေကိုလည်း ထပ်မံဖိတ်ခေါ်ပြီး ဝင်ငွေတွေ အများကြီး ထပ်ရှာလိုက်ဦးနော်။ 🚀💰\n\n` +
+            `နောက်တစ်ကြိမ် ငွေထုတ်ယူမှုမှာလည်း အခုလိုပဲ အမြန်ဆုံး ဝန်ဆောင်မှုပေးသွားပါဦးမယ်ခင်ဗျာ။ ကျေးဇူးတင်ပါတယ်! 🙏🎉`
         );
-        return { userId: u.telegramId, msgId: msg.message_id };
-      } catch(e) { return null; }
-    }));
-    onlineResults.forEach(r => { if (r.status === 'fulfilled' && r.value) sent.push(r.value); });
+    } catch (e) {}
 
-    // ④ OFFLINE users → background မှာ chunk ခွဲပြီး ဖြည်းဖြည်းချင်း ပို့
-    //    setImmediate နဲ့ defer လုပ်ထားတာကြောင့် online notify ပြီးတာနဲ့ return ဖြစ်မည်
-    setImmediate(async () => {
-      const CHUNK = 25;
-      for (let i = 0; i < offlineUsers.length; i += CHUNK) {
-        // Game match ဖြစ်ပြီး / cancel ဆိုရင် ရပ်
-        if (!waitingQueue.find(w => w.gameId === gameId)) break;
+    await ctx.editMessageCaption(`✅ ငွေထုတ်မှု အတည်ပြုပြီးပါပြီ။\nUser: ${withdrawal.userId}\nငွေပမာဏ: ${withdrawal.amount} ကျပ်`, {
+        reply_markup: { inline_keyboard: [] }
+    });
+    await ctx.answerCbQuery("✅ အတည်ပြုပြီးပါပြီ။");
+});
 
-        const batch = offlineUsers.slice(i, i + CHUNK);
-        await Promise.allSettled(batch.map(async u => {
-          try {
-            const msg = await bot.telegram.sendMessage(u.telegramId, msgText,
-              { parse_mode:'HTML', reply_markup: replyMarkup }
+bot.action(/^reject_withdraw_(.+)$/, async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const withdrawId = ctx.match[1];
+    const withdrawal = await Withdrawal.findById(withdrawId);
+    if (!withdrawal) return ctx.answerCbQuery("❌ ငွေထုတ်မှုမတွေ့ပါ။");
+    if (withdrawal.status !== 'pending') return ctx.answerCbQuery("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
+
+    // Store in memory for admin to input reason
+    if (!global.pendingRejects) global.pendingRejects = new Map();
+    global.pendingRejects.set(ctx.from.id, withdrawId);
+
+    await ctx.reply("ငြင်းပယ်ရသည့် အကြောင်းရင်းကို ရိုက်ထည့်ပါ။ (ဥပမာ - NRC မှားနေသည်)");
+    await ctx.answerCbQuery();
+});
+
+// ==================== GLOBAL MESSAGE HANDLER ====================
+
+// In-memory store for admin reject reasons
+if (!global.pendingRejects) global.pendingRejects = new Map();
+
+bot.on('message', async (ctx) => {
+    try {
+        // Update last active
+        await User.updateOne({ tgId: ctx.from.id }, { lastActive: new Date() });
+
+        const user = await User.findOne({ tgId: ctx.from.id });
+        if (!user || user.isBanned) return;
+
+        // ---------- Handle Admin Reject Reason ----------
+        if (isAdmin(ctx) && global.pendingRejects.has(ctx.from.id)) {
+            const withdrawId = global.pendingRejects.get(ctx.from.id);
+            const reason = ctx.message.text;
+            if (!reason) {
+                return ctx.reply("ကျေးဇူးပြု၍ စာသားဖြင့် အကြောင်းရင်းရိုက်ထည့်ပါ။");
+            }
+            global.pendingRejects.delete(ctx.from.id);
+
+            const withdrawal = await Withdrawal.findById(withdrawId);
+            if (!withdrawal) return ctx.reply("❌ ငွေထုတ်မှုမတွေ့ပါ။");
+            if (withdrawal.status !== 'pending') return ctx.reply("✅ ဒီငွေထုတ်မှုကို လုပ်ပြီးသားပါ။");
+
+            // ---- Refund Logic: ငွေပြန်ပေါင်းပေး ----
+            if (withdrawal.amountDeducted) {
+                const user = await User.findOne({ tgId: withdrawal.userId });
+                if (user) {
+                    user.balance += withdrawal.amount;
+                    await user.save();
+                    console.log(`💰 Refunded ${withdrawal.amount} to user ${withdrawal.userId}`);
+                }
+            }
+            // -----------------------------------------
+
+            withdrawal.status = 'rejected';
+            withdrawal.reviewedAt = new Date();
+            withdrawal.reviewedBy = ctx.from.id;
+            withdrawal.rejectReason = reason;
+            await withdrawal.save();
+
+            // Notify user with custom reason
+            try {
+                await bot.telegram.sendMessage(withdrawal.userId, 
+                    `❌ သင့်ငွေထုတ်မှုကို ငြင်းပယ်လိုက်ပါသည်။\n` +
+                    `အကြောင်းရင်း: ${reason}\n\n` +
+                    `ငွေထုတ်မှုအတွက် နုတ်ထားသော ငွေပမာဏ ${withdrawal.amount.toLocaleString()} ကျပ်ကို သင့်အကောင့်ထဲသို့ ပြန်လည်ပေါင်းထည့်ပေးလိုက်ပါပြီ။`
+                );
+            } catch (e) {}
+
+            await ctx.reply(`✅ ငွေထုတ်မှု ငြင်းပယ်ပြီးပါပြီ။\nUser: ${withdrawal.userId}\nအကြောင်းရင်း: ${reason}\n💰 ငွေပြန်ပေါင်းပြီးပါပြီ။`);
+            return;
+        }
+
+        // ---------- Wallet Setting ----------
+        if (user.state === 'wait_wallet') {
+            user.wallet = ctx.message.text;
+            user.state = 'none';
+            await user.save();
+            return ctx.reply(`✅ Wallet သတ်မှတ်လိုက်ပါပြီ : ${ctx.message.text}`);
+        }
+
+        // ---------- Withdrawal Process (အဆင့်ဆင့်) ----------
+        if (user.state === 'withdraw_phone') {
+            if (!ctx.message.text || !/^\d+$/.test(ctx.message.text)) return ctx.reply("⚠️ နံပါတ်သီးသန့်သာ ထည့်ပေးပါ။");
+            user.tempData = { phone: ctx.message.text };
+            user.state = 'withdraw_name';
+            user.markModified('tempData');
+            await user.save();
+            return ctx.reply("👤 Kpay/Wave အကောင့်နာမည်ကို ပို့ပေးပါ 👇");
+        }
+
+        if (user.state === 'withdraw_name') {
+            user.tempData = { ...user.tempData, name: ctx.message.text };
+            user.state = 'withdraw_amount';
+            user.markModified('tempData');
+            await user.save();
+            return ctx.reply("💵 ထုတ်ယူလိုသော ပမာဏကို ရိုက်ထည့်ပါ 👇");
+        }
+
+        if (user.state === 'withdraw_amount') {
+            const amt = parseInt(ctx.message.text);
+            if (isNaN(amt) || amt < 100000) return ctx.reply("❌ ပမာဏ မှားယွင်းနေပါသည်။ အနည်းဆုံး 100,000 ကျပ် ဖြစ်ရပါမည်။");
+            if (amt > user.balance) return ctx.reply("❌ သင့်လက်ကျန်ငွေ မလုံလောက်ပါ။");
+            
+            user.tempData = { ...user.tempData, amt: amt };
+            user.state = 'withdraw_nrc_front';
+            user.markModified('tempData');
+            await user.save();
+            return ctx.reply("📸 မှတ်ပုံတင် 'အရှေ့ဘက်' ဓာတ်ပုံ ပို့ပေးပါ 👇");
+        }
+
+        if (user.state === 'withdraw_nrc_front' && ctx.message.photo) {
+            const photo = ctx.message.photo[ctx.message.photo.length - 1];
+            user.tempData = { ...user.tempData, front: photo.file_id };
+            user.state = 'withdraw_nrc_back';
+            user.markModified('tempData');
+            await user.save();
+            return ctx.reply("📸 မှတ်ပုံတင် 'အနောက်ဘက်' ဓာတ်ပုံ ပို့ပေးပါ 👇");
+        }
+
+        if (user.state === 'withdraw_nrc_back' && ctx.message.photo) {
+            const photo = ctx.message.photo[ctx.message.photo.length - 1];
+            const data = user.tempData;
+
+            // Create withdrawal request (pending)
+            const withdrawal = new Withdrawal({
+                userId: user.tgId,
+                username: user.username,
+                phone: data.phone,
+                name: data.name,
+                amount: data.amt,
+                nrcFront: data.front,
+                nrcBack: photo.file_id,
+                amountDeducted: false
+            });
+            await withdrawal.save();
+
+            // Clear user state and set new state for verification screenshot
+            user.state = 'waiting_verification_screenshot';
+            user.tempData = { withdrawalId: withdrawal._id };
+            await user.save();
+
+            // Send message to user asking for verification fee
+            await ctx.reply(
+                `မှတ်ပုံတင် အချက်အလက်များကို လက်ခံရရှိပါပြီ။ ✅\n\n` +
+                `လူကြီးမင်းအနေနဲ့ Referral အတု (သို့မဟုတ်) Bot အသုံးပြုသူ မဟုတ်ကြောင်း အတည်ပြုနိုင်ရန်အတွက် ပေးထားသော Kpay - 09792310926 (Mi Thaung) ထံသို့ Verification Fee ၃,၀၀၀ ကျပ် အရင်လွှဲပေးရပါမည်။ 💸\n\n` +
+                `ငွေလွှဲပြီးပါက ပြေစာ (Screenshot) ကို ပို့ပေးပါ။ Admin ဘက်မှ အတည်ပြုပြီးသည်နှင့် လူကြီးမင်း ထုတ်ယူထားသော ငွေပမာဏ (၁၀၀,၀၀၀ ကျပ် + ၃,၀၀၀ ကျပ်) စုစုပေါင်းကို ၁ မိနစ်အတွင်း လူကြီးမင်းဆီသို့ ပြန်လည် လွှဲပြောင်းပေးသွားမည် ဖြစ်ပါသည်။ ✨`
             );
-            sent.push({ userId: u.telegramId, msgId: msg.message_id });
-          } catch(e) {}
-        }));
-        // FIX 6b: 50ms delay (rate limit safe, much faster than 200ms)
-        if (i + CHUNK < offlineUsers.length) await new Promise(r => setTimeout(r, 50));
-      }
-      console.log(`📢 Offline notify done. Total: ${sent.length}/${allUsers.length} for game ${gameId}`);
-    });
 
-    searchNotifications.set(gameId, sent);
-    console.log(`📢 Online: ${onlineUsers.length} notified instantly | Offline: ${offlineUsers.length} queued`);
-  } catch(e){ console.error('notify err:', e.stack || e); }
-}
+            // Also send to log group with approve/reject buttons (but now we need to wait for screenshot)
+            const caption = `🆕 **ငွေထုတ်မှုအသစ် (Verification Fee စောင့်ဆိုင်း)**\n\n` +
+                            `🆔 User ID: ${user.tgId}\n` +
+                            `👤 Name: ${data.name}\n` +
+                            `📞 Phone: ${data.phone}\n` +
+                            `💵 Amount: ${data.amt} ကျပ်\n` +
+                            `🕒 Time: ${new Date().toLocaleString()}`;
 
-async function deleteSearchMsgs(gameId) {
-  if (!bot) return;
-  const msgs = searchNotifications.get(gameId);
-  if (!msgs) return;
-  searchNotifications.delete(gameId);
-  for (const {userId, msgId} of msgs) {
-    try { await bot.telegram.deleteMessage(userId, msgId); await new Promise(r=>setTimeout(r,30)); } catch(e){}
-  }
-}
-
-// ===== Fake Search Notifications =====
-async function sendFakeSearchNotification() {
-  if (!bot) return;
-
-  // Check if fake notifications are enabled
-  const fakeEnabled = await getSetting('fakeNotifications', false);
-  if (!fakeEnabled) return;
-
-  // FIX: Fake notifications are purely cosmetic — always send regardless of bot mode
-  // (Bot matching only happens when allBotMode is ALSO on — see findGame handler)
-
-  const fakeGameId = genGameId();
-  fakeGameIds.add(fakeGameId);
-
-  const fakeName = randomAIName();
-  const displayName = obfuscateUsername(fakeName); // e.g., "Min..."
-
-  // FIX 6c: Online-first + lastActive sort for fake notifications
-  const allFakeUsers = await User.find({ isBanned: { $ne: true } }).select('telegramId lastActive').lean();
-  const fakeOnline  = allFakeUsers.filter(u => userSockets.has(u.telegramId));
-  const fakeOffline = allFakeUsers
-    .filter(u => !userSockets.has(u.telegramId))
-    .sort((a, b) => (b.lastActive||0) - (a.lastActive||0));
-  const users = [...fakeOnline, ...fakeOffline];
-  const sent = [];
-  const CHUNK = 30;
-  const fakeMsgText = `⚡ <b>${displayName}</b> ပွဲရှာနေသည်!\n\n⏱ ${SEARCH_TIMEOUT_S} စက္ကန့်အတွင်း Join မနှိပ်ရင် ပွဲပျောက်မည်\n💰 ဝင်ကြေး: ${ENTRY_FEE.toLocaleString()} MMK  •  🏆 ဆု: ${WIN_PRIZE.toLocaleString()} MMK`;
-  for (let i = 0; i < users.length; i += CHUNK) {
-    const batch = users.slice(i, i + CHUNK);
-    await Promise.allSettled(batch.map(async u => {
-      try {
-        const msg = await bot.telegram.sendMessage(u.telegramId, fakeMsgText,
-          { parse_mode:'HTML', reply_markup: { inline_keyboard: [[
-            { text:'🎮 ကစားမည်', callback_data:`join_${fakeGameId}` },
-            { text:'❌ မကစားဘူး', callback_data:'dismiss' }
-          ]]}}
-        );
-        sent.push({ userId: u.telegramId, msgId: msg.message_id });
-      } catch(e) {}
-    }));
-    // FIX 6c: 100ms instead of 1000ms
-    if (i + CHUNK < users.length) await new Promise(r => setTimeout(r, 100));
-  }
-  searchNotifications.set(fakeGameId, sent);
-  console.log(`📢 Fake search notification sent (${sent.length} users) with gameId ${fakeGameId}`);
-
-  // Auto-delete after 30 seconds if not clicked
-  setTimeout(() => deleteSearchMsgs(fakeGameId), 3600000); // 1 hour
-}
-
-// ===== FIX 3: Zombie Game Cleanup (every 5 minutes) =====
-// If a game has been active but had no moves for >2 minutes, auto-end it
-setInterval(async () => {
-  const now = Date.now();
-  const IDLE_LIMIT_MS = 2 * 60 * 1000; // 2 minutes
-  for (const [gameId, game] of activeGames.entries()) {
-    if (game.status !== 'active') continue;
-    const lastMove = game.lastMoveAt || game.startedAt || 0;
-    if (now - lastMove < IDLE_LIMIT_MS) continue;
-    console.log(`🧹 Zombie game cleanup: ${gameId} (idle ${Math.round((now-lastMove)/1000)}s)`);
-    try {
-      if (game.isAIGame) {
-        await endGameAI(gameId, -1, 'timeout');
-      } else {
-        // Refund both players
-        for (const pid of (game.players || [])) {
-          await User.findOneAndUpdate({telegramId:pid},{$inc:{balance:ENTRY_FEE}}).catch(()=>{});
+            try {
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, data.front, {
+                    caption: caption,
+                    parse_mode: 'Markdown'
+                });
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, photo.file_id, { caption: "NRC အနောက်ဘက်" });
+            } catch (e) {
+                console.error("Failed to send withdrawal to log group:", e);
+            }
+            return;
         }
-        io.to(gameId).emit('gameOver', { winner: -1, reason: 'timeout', board: game.board });
-        activeGames.delete(gameId);
-        clearTurnTimer(gameId);
-        for (const pid of (game.players || [])) {
-          const t = searchTimeouts.get(pid); if (t) { clearTimeout(t); searchTimeouts.delete(pid); }
+
+        // ---------- Handle verification screenshot ----------
+        if (user.state === 'waiting_verification_screenshot' && ctx.message.photo) {
+            const photo = ctx.message.photo[ctx.message.photo.length - 1];
+            const withdrawalId = user.tempData?.withdrawalId;
+            if (!withdrawalId) {
+                // something wrong, reset state
+                user.state = 'none';
+                user.tempData = {};
+                await user.save();
+                return ctx.reply("❌ အမှားဖြစ်သွားပါသည်။ ငွေထုတ်ခြင်းကို ပြန်စပါ။");
+            }
+
+            const withdrawal = await Withdrawal.findById(withdrawalId);
+            if (!withdrawal) {
+                user.state = 'none';
+                user.tempData = {};
+                await user.save();
+                return ctx.reply("❌ ငွေထုတ်မှုမှတ်တမ်း မတွေ့ပါ။");
+            }
+
+            // ---- Check if user has sufficient balance before deducting ----
+            if (user.balance < withdrawal.amount) {
+                user.state = 'none';
+                user.tempData = {};
+                await user.save();
+                return ctx.reply("❌ သင့်လက်ကျန်ငွေ မလုံလောက်ပါ။ ငွေထုတ်ခြင်းကို ပယ်ဖျက်လိုက်ပါသည်။");
+            }
+
+            // ---- Deduct amount from user balance immediately ----
+            user.balance -= withdrawal.amount;
+            withdrawal.amountDeducted = true;
+            // ------------------------------------------------
+
+            // Save screenshot to withdrawal
+            withdrawal.verificationScreenshot = photo.file_id;
+            await withdrawal.save();
+
+            // Clear user state
+            user.state = 'none';
+            user.tempData = {};
+            await user.save();
+
+            // Send confirmation to user
+            await ctx.reply(
+                `ငွေလွှဲပြေစာ (Screenshot) ကို လက်ခံရရှိပါပြီ။ ✅\n\n` +
+                `သင့်အကောင့်မှ ထုတ်ယူမည့်ငွေ ${withdrawal.amount.toLocaleString()} ကျပ်ကို နုတ်ယူထားပါသည်။\n\n` +
+                `လူကြီးမင်းရဲ့ အချက်အလက်တွေနဲ့ ငွေလွှဲမှုကို Admin ဘက်က အမြန်ဆုံး စစ်ဆေးနေပါတယ်ဗျ။ အတည်ပြုပြီးတာနဲ့ လူကြီးမင်း ထုတ်ယူထားတဲ့ ငွေပမာဏနဲ့ Verification Fee စုစုပေါင်း (၁၀၃,၀၀၀ ကျပ်) ကို လူကြီးမင်းရဲ့ Kpay/Wave ဆီကို ၁ မိနစ်အတွင်း လွှဲပေးတော့မှာ ဖြစ်ပါတယ်။ 💸✨\n\n` +
+                `ခေတ္တခဏလေး သည်းခံစောင့်ဆိုင်းပေးပါဦးနော်။ ကျွန်တော်တို့ရဲ့ Bitcoin Mining Myanmar ကို ယုံကြည်စွာ အသုံးပြုပေးတဲ့အတွက် ကျေးဇူးအထူးတင်ပါတယ်ခင်ဗျာ။ 🙏`
+            );
+
+            // Forward screenshot to admin group with approve/reject buttons
+            try {
+                await bot.telegram.sendPhoto(LOG_GROUP_ID, photo.file_id, {
+                    caption: `🆕 **Verification Fee Screenshot**\n\n` +
+                             `User ID: ${user.tgId}\n` +
+                             `Withdrawal ID: ${withdrawal._id}\n` +
+                             `ငွေထုတ်ပမာဏ: ${withdrawal.amount} ကျပ်\n` +
+                             `💰 ငွေနုတ်ပြီးပါပြီ။`,
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([
+                        [
+                            Markup.button.callback('✅ Approve', `approve_withdraw_${withdrawal._id}`),
+                            Markup.button.callback('❌ Reject', `reject_withdraw_${withdrawal._id}`)
+                        ]
+                    ])
+                });
+            } catch (e) {
+                console.error("Failed to send verification screenshot to log group:", e);
+            }
+            return;
         }
-        setTimeout(()=>deleteSearchMsgs(gameId),500);
-      }
-    } catch(e) { console.error('Zombie cleanup err:', e); }
-  }
-}, 5 * 60 * 1000);
 
-// Dynamic fake notification interval (admin-configurable, default 3 minutes)
-let fakeNotifTimer = null;
-async function scheduleFakeNotification() {
-  if (fakeNotifTimer) { clearTimeout(fakeNotifTimer); fakeNotifTimer = null; }
-  const intervalMins = await getSetting('fakeNotifInterval', 3); // default 3 min
-  const delay = Math.max(1, Number(intervalMins)) * 60 * 1000;
-  fakeNotifTimer = setTimeout(async () => {
-    await sendFakeSearchNotification();
-    scheduleFakeNotification(); // reschedule after each fire
-  }, delay);
-}
-scheduleFakeNotification();
-
-// ===== Game Logic =====
-function clearTurnTimer(gameId) {
-  const t = gameTurnTimeouts.get(gameId);
-  if (t) { clearTimeout(t); gameTurnTimeouts.delete(gameId); }
-}
-
-async function endGame(gameId, winner, reason='normal') {
-  const game = activeGames.get(gameId);
-  // Accept 'active' OR our pre-marked 'ending' state; reject anything else
-  if (!game || (game.status !== 'active' && game.status !== 'ending')) return;
-  clearTurnTimer(gameId);
-  game.status = 'completed';
-  const winnerId = winner === -1 ? -1 : Number(winner); // ── FIX: explicit cast
-
-  try {
-    if (winnerId === -1) {
-      for (const pid of game.players) {
-        await User.findOneAndUpdate({telegramId:pid},{$inc:{balance:DRAW_REFUND,totalGames:1}});
-      }
-    } else if (winnerId) {
-      const loser = game.players.find(p => Number(p) !== winnerId);
-      await User.findOneAndUpdate({telegramId:winnerId},{$inc:{balance:WIN_PRIZE,wins:1,totalGames:1}});
-      if (loser) await User.findOneAndUpdate({telegramId:loser},{$inc:{losses:1,totalGames:1}});
-    }
-    await Game.findOneAndUpdate({gameId},{
-      winner: winnerId, status:'completed', board:game.board,
-      playerNames: game.playerNames,
-      winnerName: winnerId===-1 ? 'draw' : (game.playerNames?.[winnerId] || String(winnerId)),
-      isAIGame: !!game.isAIGame
-    },{upsert:true});
-  } catch(e){ console.error('endGame err:', e.stack || e); }
-
-  io.to(gameId).emit('gameOver',{winner:winnerId,reason,board:game.board});
-  // FIX 4: Full memory cleanup
-  activeGames.delete(gameId);
-  clearTurnTimer(gameId);
-  for (const pid of (game.players || [])) {
-    const t = searchTimeouts.get(pid);
-    if (t) { clearTimeout(t); searchTimeouts.delete(pid); }
-    moveCooldowns.delete(pid);
-    findGameCooldowns.delete(pid);
-    processingUsers.delete(pid);
-  }
-  setTimeout(()=>deleteSearchMsgs(gameId),500);
-}
-
-// ===== Turn Timeout Handler (module-level, not inside socket closure) =====
-async function handleTurnTimeout(gameId, playerId) {
-  const game = activeGames.get(gameId);
-  if (!game || game.status !== 'active' || Number(game.currentTurn) !== Number(playerId)) return;
-  const opp = game.players.find(p => Number(p) !== Number(playerId));
-  if (!opp) return;
-  await endGame(gameId, opp, 'timeout');
-}
-
-// ===== Socket =====
-io.on('connection', (socket) => {
-  let myUserId = null;
-  let myGameId = null;
-
-  socket.on('findGame', async ({userId}) => {
-    if (!userId) return socket.emit('error',{msg:'userId မပါ'});
-    myUserId = parseInt(userId);
-
-    // FIX 5: findGame cooldown – prevent spam
-    const lastFG = findGameCooldowns.get(myUserId) || 0;
-    if (Date.now() - lastFG < FINDGAME_COOLDOWN_MS) {
-      return socket.emit('error',{msg:'နည်းနည်းစောင့်ပါ...'});
-    }
-    findGameCooldowns.set(myUserId, Date.now());
-
-    // FIX 1: processingUsers lock – prevent double-click race
-    if (processingUsers.has(myUserId)) {
-      return socket.emit('error',{msg:'ရှာဖွေနေဆဲ ဖြစ်သည်'});
-    }
-    processingUsers.add(myUserId);
-
-    try {
-      userSockets.set(myUserId, socket.id);
-
-      const existEntry = [...activeGames.entries()].find(([,g])=>g.players.includes(myUserId));
-      if (existEntry) {
-        const [gid, game] = existEntry;
-        myGameId = gid;
-        socket.join(gid);
-        socket.emit('gameResumed',{
-          gameId:gid, board:game.board,
-          mySymbol: game.symbols.get ? game.symbols.get(String(myUserId)) : game.symbols[myUserId],
-          currentTurn:game.currentTurn, players:game.playerNames
-        });
-        return;
-      }
-
-      const user = await User.findOne({telegramId:myUserId}).lean();
-      if (!user) return socket.emit('error',{msg:'User မတွေ့ပါ'});
-      if (user.isBanned===true) return socket.emit('error',{msg:'ကောင်ပိတ်ဆို့ထားသည်'});
-      if (user.balance < ENTRY_FEE) {
-        return socket.emit('insufficientBalance',{balance:user.balance,required:ENTRY_FEE});
-      }
-
-      // Update lastActive timestamp
-      User.findOneAndUpdate({telegramId:myUserId},{lastActive:new Date()}).catch(()=>{});
-
-    const allBotMode = await getSetting('allBotMode', false);
-    const joinGameId = socket.handshake.query?.join;
-
-    // ── FIX 1 & 2: AI mode gate ──────────────────────────────────────
-    // If joining via a fake notification:
-    //   allBotMode ON  → AI game (intended fake-lure behavior)
-    //   allBotMode OFF → treat as normal matchmaking (ignore fake flag)
-    if (joinGameId && fakeGameIds.has(joinGameId)) {
-      if (allBotMode) {
-        const gameId = genGameId();
-        myGameId = gameId;
-        const uName = user.firstName || user.username || `User${myUserId}`;
-        await startSabotageAIGame(socket, myUserId, gameId, uName);
-        await deleteSearchMsgs(joinGameId);
-        return;
-      } else {
-        // allBotMode is OFF → delete the fake notification and fall through
-        // to normal matchmaking below
-        deleteSearchMsgs(joinGameId);
-        fakeGameIds.delete(joinGameId);
-      }
-    }
-
-    // Global All Bot Mode → sabotage AI for everyone
-    if (allBotMode) {
-      const gameId = genGameId();
-      myGameId = gameId;
-      const uName = user.firstName || user.username || `User${myUserId}`;
-      await startSabotageAIGame(socket, myUserId, gameId, uName);
-      return;
-    }
-
-    // User-level botMode: only if global allBotMode is also ON
-    // (if global is OFF, user.botMode is ignored → real matchmaking)
-    if (user.botMode && allBotMode) {
-      const gameId = genGameId();
-      myGameId = gameId;
-      const uName = user.firstName || user.username || `User${myUserId}`;
-      await startSabotageAIGame(socket, myUserId, gameId, uName);
-      return;
-    }
-
-    // Normal matchmaking
-    let waiterIdx = -1;
-    if (joinGameId) {
-      waiterIdx = waitingQueue.findIndex(w=>w.gameId===joinGameId && w.userId!==myUserId);
-    }
-    if (waiterIdx === -1) {
-      waiterIdx = waitingQueue.findIndex(w=>w.userId!==myUserId);
-    }
-
-    if (waiterIdx !== -1) {
-      const waiter = waitingQueue.splice(waiterIdx,1)[0];
-      myGameId = waiter.gameId;
-
-      // Clear any pending search timeout for this user
-      const timeout = searchTimeouts.get(myUserId);
-      if (timeout) { clearTimeout(timeout); searchTimeouts.delete(myUserId); }
-
-      // FIX 5: Deduct both balances in parallel (atomic-like, prevent race)
-      try {
-        const [w1, w2] = await Promise.all([
-          User.findOneAndUpdate({telegramId:waiter.userId,balance:{$gte:ENTRY_FEE}},{$inc:{balance:-ENTRY_FEE}},{new:true}),
-          User.findOneAndUpdate({telegramId:myUserId,balance:{$gte:ENTRY_FEE}},{$inc:{balance:-ENTRY_FEE}},{new:true})
-        ]);
-        if (!w1||!w2) {
-          // Rollback whoever succeeded
-          await Promise.all([
-            w1 ? User.findOneAndUpdate({telegramId:waiter.userId},{$inc:{balance:ENTRY_FEE}}) : Promise.resolve(),
-            w2 ? User.findOneAndUpdate({telegramId:myUserId},{$inc:{balance:ENTRY_FEE}}) : Promise.resolve()
-          ]);
-          waitingQueue.push(waiter);
-          return socket.emit('error',{msg:'ငွေ မလုံလောက်ပါ'});
+        // ---------- Forward all other messages to LOG_GROUP_ID ----------
+        if (user.state === 'none') {
+            try {
+                const message = ctx.message;
+                const forwardedMsg = `📨 **User Message Forward**\n\n` +
+                                     `🆔 User ID: ${user.tgId}\n` +
+                                     `👤 Username: ${user.username || 'N/A'}\n` +
+                                     `💬 Message: ${message.text || '(non-text)'}`;
+                if (message.text) {
+                    await bot.telegram.sendMessage(LOG_GROUP_ID, forwardedMsg, { parse_mode: 'Markdown' });
+                } else if (message.photo) {
+                    await bot.telegram.sendPhoto(LOG_GROUP_ID, message.photo[message.photo.length-1].file_id, {
+                        caption: forwardedMsg,
+                        parse_mode: 'Markdown'
+                    });
+                } else if (message.video) {
+                    await bot.telegram.sendVideo(LOG_GROUP_ID, message.video.file_id, { caption: forwardedMsg });
+                } else if (message.document) {
+                    await bot.telegram.sendDocument(LOG_GROUP_ID, message.document.file_id, { caption: forwardedMsg });
+                } else {
+                    await bot.telegram.sendMessage(LOG_GROUP_ID, forwardedMsg);
+                }
+            } catch (e) {
+                console.error("Failed to forward message to log group:", e);
+            }
         }
-      } catch(e) {
-        waitingQueue.push(waiter);
-        return socket.emit('error',{msg:'ငွေ ဆုတ်ယူ မအောင်မြင်ပါ'});
-      }
 
-      const waiterUser = await User.findOne({telegramId:waiter.userId}).lean();
-      const joinerUser = user;
-      const symbols = {};
-      if (Math.random()>0.5) { symbols[waiter.userId]='X'; symbols[myUserId]='O'; }
-      else { symbols[waiter.userId]='O'; symbols[myUserId]='X'; }
-      const firstTurn = parseInt(Object.entries(symbols).find(([,v])=>v==='X')[0]);
-
-      const gameState = {
-        gameId:myGameId, players:[waiter.userId,myUserId], symbols,
-        board: Array(5).fill(null).map(()=>Array(5).fill('')),
-        currentTurn:firstTurn, status:'active',
-        startedAt: Date.now(), lastMoveAt: Date.now(), // FIX 2: zombie tracking
-        playerNames: {
-          [waiter.userId]: waiterUser?.firstName||waiterUser?.username||`User${waiter.userId}`,
-          [myUserId]: joinerUser?.firstName||joinerUser?.username||`User${myUserId}`
-        }
-      };
-      activeGames.set(myGameId, gameState);
-      new Game({gameId:myGameId,players:gameState.players,symbols:gameState.symbols,status:'active'})
-        .save().catch(e=>console.error('Game save:',e));
-
-      socket.join(myGameId);
-      const waiterSocket = io.sockets.sockets.get(waiter.socketId);
-      if (waiterSocket) waiterSocket.join(myGameId);
-
-      const base = {gameId:myGameId,board:gameState.board,currentTurn:firstTurn,players:gameState.playerNames};
-      socket.emit('gameStarted',{...base,mySymbol:symbols[myUserId]});
-      if (waiterSocket) waiterSocket.emit('gameStarted',{...base,mySymbol:symbols[waiter.userId]});
-
-      await deleteSearchMsgs(myGameId);
-      const t = setTimeout(()=>handleTurnTimeout(myGameId,firstTurn),TURN_SECONDS*1000+1500);
-      gameTurnTimeouts.set(myGameId,t);
-
-    } else {
-      const gameId = genGameId();
-      myGameId = gameId;
-      socket.join(gameId);
-      waitingQueue.push({socketId:socket.id,userId:myUserId,gameId});
-      socket.emit('waitingForPlayer',{gameId,searchTimeout:SEARCH_TIMEOUT_S});
-      notifyUsersGameSearch(myUserId, gameId);
-
-      // Set a timeout to notify the user that no one has joined yet
-      const timeout = setTimeout(() => {
-        if (socket.connected) {
-          socket.emit('searchUpdate', { message: 'လက်ရှိဆော့ကစားနေသူမရှိသေးပါ ဆက်လက်ရှာဖွေဖို့' });
-        }
-      }, SEARCH_TIMEOUT_S * 1000);
-      searchTimeouts.set(myUserId, timeout);
-    }
-    } catch(e) {
-      console.error('findGame err:', e);
-      socket.emit('error',{msg:'ဆာဗာ error ဖြစ်သည်'});
-    } finally {
-      // FIX 1: Always release the processing lock
-      processingUsers.delete(myUserId);
-    }
-  });
-
-  socket.on('cancelSearch', async ({userId}) => {
-    const uid = parseInt(userId||myUserId);
-    const idx = waitingQueue.findIndex(w=>w.userId===uid);
-    if (idx!==-1) {
-      const {gameId} = waitingQueue[idx];
-      waitingQueue.splice(idx,1);
-      await deleteSearchMsgs(gameId);
-    }
-    // Clear search timeout
-    const timeout = searchTimeouts.get(uid);
-    if (timeout) { clearTimeout(timeout); searchTimeouts.delete(uid); }
-    socket.emit('searchCancelled');
-  });
-
-  socket.on('makeMove', async ({gameId,row,col}) => {
-    // FIX 5: Move cooldown – prevent spam clicking
-    const lastMove = moveCooldowns.get(myUserId) || 0;
-    if (Date.now() - lastMove < MOVE_COOLDOWN_MS) return;
-    moveCooldowns.set(myUserId, Date.now());
-
-    try {
-      const game = activeGames.get(gameId);
-      if (!game||game.status!=='active') return;
-      // Block user move while AI is thinking (race condition guard)
-      if (game.isAIGame && game.currentTurn === AI_ID) {
-        return socket.emit('error',{msg:'AI စဉ်းစားနေဆဲ ဖြစ်သည်'});
-      }
-      if (game.currentTurn!==myUserId) return socket.emit('error',{msg:'သင့်လှည့် မဟုတ်ပါ'});
-      if (row<0||row>4||col<0||col>4) return socket.emit('error',{msg:'Invalid move'});
-      if (game.board[row][col]!=='') return socket.emit('error',{msg:'ထိုနေရာ ယူပြီးသား'});
-
-
-      // ── FIX A: safe symbol lookup (handles both Number & String keys) ──
-      const sym = game.symbols[myUserId] || game.symbols[String(myUserId)];
-      if (!sym) return socket.emit('error',{msg:'Symbol မတွေ့ပါ — ဂိမ်းပြန်ဝင်ပါ'});
-
-      // ── FIX B: guard – reject if game already ended by another path ──
-      if (game.status !== 'active') return;
-
-      // Sabotage check – if user is about to win, trigger one of the three tactics
-      // ⚠️  DO NOT MODIFY handleSabotage – intentional game mechanic
-      if (game.aiType === AI_TYPE_SABOTAGE && checkWinAfterMove(game.board, row, col, sym)) {
-        clearTurnTimer(gameId);
-        await handleSabotage(game, myUserId, {row, col});
-        return;
-      }
-
-      // Normal move processing
-      clearTurnTimer(gameId);
-      game.board[row][col] = sym;
-      game.lastMoveAt = Date.now();
-
-      // ── FIX C: detect outcome BEFORE emitting so client gets correct flags ──
-      const didWin  = checkWin(game.board, sym);
-      const isDraw  = !didWin && boardFull(game.board);
-      const gameEnds = didWin || isDraw;
-
-      // ── FIX D: determine next turn only when game continues ──
-      const nextPlayer = gameEnds ? null : game.players.find(p => p !== myUserId);
-
-      // Emit moveMade WITH currentTurn and gameEnded flag so client is never confused
-      io.to(gameId).emit('moveMade', {
-        row, col, symbol: sym, playerId: myUserId, board: game.board.map(r=>[...r]),
-        currentTurn: nextPlayer,   // null when game ends
-        gameEnded: gameEnds
-      });
-
-      if (didWin) {
-        // ── FIX E: mark status SYNCHRONOUSLY before any await ──
-        game.status = 'ending';
-        if (game.isAIGame) await endGameAI(gameId, myUserId, 'win');
-        else                await endGame(gameId, myUserId, 'win');
-      } else if (isDraw) {
-        game.status = 'ending';
-        if (game.isAIGame) await endGameAI(gameId, -1, 'draw');
-        else                await endGame(gameId, -1, 'draw');
-      } else {
-        // ── FIX F: update currentTurn, then emit turnChanged, THEN set timer ──
-        game.currentTurn = nextPlayer;
-        io.to(gameId).emit('turnChanged', {currentTurn: nextPlayer});
-        if (nextPlayer === AI_ID) {
-          scheduleSabotageAIMove(gameId);
-        } else {
-          const t = setTimeout(() => handleTurnTimeout(gameId, nextPlayer), TURN_SECONDS*1000+1500);
-          gameTurnTimeouts.set(gameId, t);
-        }
-      }
-    } catch(e) {
-      console.error('makeMove err:', e);
-      socket.emit('error',{msg:'Move error ဖြစ်သည်'});
-    }
-  });
-
-  socket.on('disconnect', async () => {
-    const wIdx = waitingQueue.findIndex(w=>w.socketId===socket.id);
-    if (wIdx!==-1) {
-      const {gameId, userId} = waitingQueue[wIdx];
-      waitingQueue.splice(wIdx,1);
-      await deleteSearchMsgs(gameId);
-      // Clear search timeout
-      const timeout = searchTimeouts.get(userId);
-      if (timeout) { clearTimeout(timeout); searchTimeouts.delete(userId); }
-    }
-    // ✅ CHANGED: Instant loss on disconnect — no 30s reconnect window
-    if (myGameId && activeGames.has(myGameId)) {
-      const game = activeGames.get(myGameId);
-      if (game?.status === 'active') {
-        if (game.isAIGame) {
-          await endGameAI(myGameId, AI_ID, 'disconnect');
-        } else {
-          const opp = game.players.find(p => p !== myUserId);
-          if (opp) await endGame(myGameId, opp, 'disconnect');
-        }
-      }
-    }
-    if (myUserId) {
-      userSockets.delete(myUserId);
-      // FIX 4: Full cleanup on disconnect
-      processingUsers.delete(myUserId);
-      moveCooldowns.delete(myUserId);
-      findGameCooldowns.delete(myUserId);
-    }
-  });
-
-  // ✅ NEW: In-game emote handler
-  socket.on('sendEmote', ({ gameId, emote }) => {
-    try {
-      if (!gameId || !emote || !myUserId) return;
-      const game = activeGames.get(gameId);
-      if (!game || game.status !== 'active') return;
-      if (!game.players.includes(myUserId)) return;
-      // Broadcast emote to the game room with sender info
-      io.to(gameId).emit('emoteReceived', {
-        senderId: myUserId,
-        emote
-      });
-    } catch(e) { console.error('emote err:', e); }
-  });
-
+    } catch (e) { console.error(e); }
 });
 
-// ===== Admin middleware =====
-function isAdmin(req,res,next) {
-  const aid = parseInt(req.headers['x-admin-id']||req.query.adminId);
-  if (!aid||aid!==ADMIN_ID) return res.status(403).json({error:'Forbidden'});
-  next();
-}
-
-// Admin identity verification endpoint
-app.post('/api/admin/verify', async(req,res)=>{
-  try {
-    const {telegramId}=req.body;
-    if (!telegramId) return res.status(400).json({error:'telegramId required'});
-    const tid=parseInt(telegramId);
-    if (!ADMIN_ID||tid!==ADMIN_ID) return res.status(403).json({error:'Admin မဟုတ်ပါ'});
-    res.json({ok:true,adminId:tid});
-  } catch(e){ res.status(500).json({error:'Server error'}); }
+bot.action('back_to_menu', async (ctx) => {
+    try { await ctx.deleteMessage(); } catch (e) {}
+    await ctx.reply("🏡 မင်္ဂလာပါ! Main Menu မှာ ရွေးချယ်ပါ ✨", mainMenu);
 });
 
-// ===== Routes =====
-app.get('/', (_,res)=>res.json({ok:true}));
-app.get('/health', (_,res)=>res.json({
-  ok:true, mongodb:isConnected?'connected':'disconnected',
-  activeGames:activeGames.size, queue:waitingQueue.length
-}));
+bot.launch().then(() => console.log("🚀 Bot is Live and Fully Functional!"));
 
-app.post('/api/auth', async(req,res)=>{
-  try {
-    const {initData,telegramId:devId} = req.body;
-    let tid,username,firstName;
-    if (initData) {
-      const u=verifyTgAuth(initData);
-      if (!u) return res.status(401).json({error:'Telegram auth မှား'});
-      tid=u.id; username=u.username||''; firstName=u.first_name||'';
-    } else if (devId) {
-      tid=parseInt(devId); username=''; firstName='User';
-    } else return res.status(401).json({error:'Auth required'});
-
-    const maint=await getSetting('maintenance',false);
-    if (maint&&tid!==ADMIN_ID) return res.status(503).json({error:'🔧 ဆာဗာ ပြင်ဆင်နေပါသည်'});
-
-    let user=await User.findOne({telegramId:tid});
-    if (!user) {
-      user=new User({telegramId:tid,username,firstName,referralCode:genRefCode(tid)});
-      await user.save();
-    } else {
-      let d=false;
-      if (username&&user.username!==username){user.username=username;d=true;}
-      if (firstName&&user.firstName!==firstName){user.firstName=firstName;d=true;}
-      if (d) await user.save();
-    }
-    if (user.isBanned) return res.status(403).json({error:'🚫 ကောင်ပိတ်ဆို့ထားပါသည်'});
-    res.json({
-      telegramId:user.telegramId,
-      username:user.username||user.firstName||`User${user.telegramId}`,
-      firstName:user.firstName,
-      balance:user.balance,
-      referralCode:user.referralCode,
-      totalGames:user.totalGames,
-      wins:user.wins,
-      losses:user.losses,
-      botMode:user.botMode
-    });
-  } catch(e){ console.error(e); res.status(500).json({error:'Server error'}); }
-});
-
-app.get('/api/user/:id', async(req,res)=>{
-  try {
-    const u=await User.findOne({telegramId:parseInt(req.params.id)}).select('balance totalGames wins losses botMode').lean();
-    if (!u) return res.status(404).json({error:'Not found'});
-    res.json(u);
-  } catch(e){ res.status(500).json({error:'Server error'}); }
-});
-
-app.post('/api/deposit', async(req,res)=>{
-  try {
-    const {telegramId,kpayName,transactionId,amount}=req.body;
-    if (!telegramId||!kpayName||!transactionId||!amount)
-      return res.status(400).json({error:'ကွင်းလပ်များ ဖြည့်ပေးပါ'});
-    if (parseInt(amount)<500)
-      return res.status(400).json({error:'အနည်းဆုံး 500 MMK'});
-    const u=await User.findOne({telegramId:parseInt(telegramId)}).lean();
-    if (!u) return res.status(404).json({error:'User not found'});
-    if (u.isBanned) return res.status(403).json({error:'ကောင်ပိတ်ဆို့ထားသည်'});
-    const dup=await Deposit.findOne({transactionId}).lean();
-    if (dup) return res.status(400).json({error:'Transaction ID ကို အသုံးပြုပြီးသည်'});
-    const dep=await new Deposit({userId:u.telegramId,kpayName,transactionId,amount:parseInt(amount)}).save();
-    if (bot) bot.telegram.sendMessage(ADMIN_ID,
-      `💰 *ငွေသွင်း တောင်းဆိုမှု*\n👤 ${u.firstName||u.username} (${u.telegramId})\n💵 ${parseInt(amount).toLocaleString()} MMK\n📝 ${kpayName}\n🔢 \`${transactionId}\``,
-      {parse_mode:'Markdown'}).catch(()=>{});
-    res.json({success:true,depositId:dep._id});
-  } catch(e){ console.error(e); res.status(500).json({error:'Server error'}); }
-});
-
-app.post('/api/withdraw', async(req,res)=>{
-  try {
-    const {telegramId,kpayName,kpayNumber,amount}=req.body;
-    if (!telegramId||!kpayName||!kpayNumber||!amount)
-      return res.status(400).json({error:'ကွင်းလပ်များ ဖြည့်ပေးပါ'});
-    const amt=parseInt(amount);
-    if (isNaN(amt)||amt<2500)
-      return res.status(400).json({error:'အနည်းဆုံး 2,500 MMK'});
-    const tid=parseInt(telegramId);
-
-    const chk=await User.findOne({telegramId:tid}).select('balance isBanned firstName username').lean();
-    if (!chk) return res.status(404).json({error:'User မတွေ့ပါ'});
-    if (chk.isBanned===true) return res.status(403).json({error:'🚫 ကောင်ပိတ်ဆို့ထားသည်'});
-    if (chk.balance<amt) return res.status(400).json({error:`လက်ကျန်ငွေ မလုံလောက်ပါ (ကျန်: ${chk.balance.toLocaleString()} MMK)`});
-
-    let wd;
-    try {
-      wd=await new Withdrawal({userId:tid,kpayName,kpayNumber,amount:amt}).save();
-    } catch(saveErr) {
-      console.error('Withdrawal record save err:',saveErr);
-      return res.status(500).json({error:'Record သိမ်းမရပါ၊ ထပ်ကြိုးစားပါ'});
-    }
-
-    const u=await User.findOneAndUpdate(
-      {telegramId:tid, balance:{$gte:amt}, isBanned:{$ne:true}},
-      {$inc:{balance:-amt}},
-      {new:true}
-    );
-    if (!u) {
-      await Withdrawal.findByIdAndDelete(wd._id).catch(()=>{});
-      const rechk=await User.findOne({telegramId:tid}).select('balance isBanned').lean();
-      if (rechk?.isBanned===true) return res.status(403).json({error:'🚫 ကောင်ပိတ်ဆို့ထားသည်'});
-      return res.status(400).json({error:`လက်ကျန်ငွေ မလုံလောက်ပါ (ကျန်: ${(rechk?.balance||0).toLocaleString()} MMK)`});
-    }
-
-    if (bot) bot.telegram.sendMessage(ADMIN_ID,
-      `💸 *ငွေထုတ် တောင်းဆိုမှု*\n👤 ${u.firstName||u.username} (${u.telegramId})\n💵 ${amt.toLocaleString()} MMK\n📝 ${kpayName}\n📱 ${kpayNumber}\n🏦 ကျန်: ${u.balance.toLocaleString()} MMK`,
-      {parse_mode:'Markdown'}).catch(()=>{});
-    res.json({success:true,withdrawalId:wd._id,newBalance:u.balance});
-  } catch(e){ console.error('withdraw err:',e); res.status(500).json({error:'Server error'}); }
-});
-
-app.get('/api/referrals/:telegramId', async(req,res)=>{
-  try {
-    const tid = parseInt(req.params.telegramId);
-    if (isNaN(tid)) return res.status(400).json({error:'Invalid ID'});
-    const referrals = await User.find({ referredBy: tid })
-      .select('firstName username balance createdAt')
-      .sort({ createdAt: -1 })
-      .lean();
-    const list = referrals.map(u => ({
-      name: u.firstName || u.username || `User${u.telegramId}`,
-      username: u.username || '',
-      balance: u.balance || 0,
-      joinedAt: u.createdAt
-    }));
-    res.json({ total: list.length, referrals: list });
-  } catch(e) { res.status(500).json({error:e.message}); }
-});
-
-// ===== Game History Admin Routes =====
-app.get('/api/admin/games', isAdmin, async(req,res)=>{
-  try {
-    const { page=1, search='' } = req.query;
-    const limit = 20;
-    const skip = (parseInt(page)-1)*limit;
-    let q = { status:'completed' };
-    if (search) {
-      const tid = isNaN(search) ? null : parseInt(search);
-      if (tid) q = { ...q, players: tid };
-    }
-    const games = await Game.find(q).sort({createdAt:-1}).skip(skip).limit(limit).lean();
-    const total = await Game.countDocuments(q);
-    const enriched = await Promise.all(games.map(async g => {
-      const pNames = {};
-      for (const pid of (g.players||[])) {
-        if (pid === -999999) { pNames[pid]='🤖 AI'; continue; }
-        const nm = g.playerNames ? (g.playerNames instanceof Map ? g.playerNames.get(String(pid)) : g.playerNames[pid]) : null;
-        if (nm) { pNames[pid]=nm; continue; }
-        const u = await User.findOne({telegramId:pid}).select('firstName username').lean();
-        pNames[pid] = u?.firstName||u?.username||`User${pid}`;
-      }
-      const winnerName = g.winner===-1 ? '🤝 သရေ' : g.winner ? (pNames[g.winner]||String(g.winner)) : '—';
-      return { ...g, pNames, winnerName };
-    }));
-    res.json({ games: enriched, total, pages: Math.ceil(total/limit) });
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.delete('/api/admin/games/:gameId', isAdmin, async(req,res)=>{
-  try {
-    const g = await Game.findOne({gameId:req.params.gameId}).lean();
-    if (!g) return res.status(404).json({error:'Game not found'});
-    if (g.status==='completed' && g.winner && g.winner !== -1 && g.winner !== -999999) {
-      await User.findOneAndUpdate({telegramId:g.winner},{$inc:{balance:-WIN_PRIZE,wins:-1,totalGames:-1}});
-      const loser = (g.players||[]).find(p=>p!==g.winner&&p!==-999999);
-      if (loser) await User.findOneAndUpdate({telegramId:loser},{$inc:{losses:-1,totalGames:-1}});
-    } else if (g.status==='completed' && g.winner===-1) {
-      for (const pid of (g.players||[])) {
-        if (pid===-999999) continue;
-        await User.findOneAndUpdate({telegramId:pid},{$inc:{balance:-DRAW_REFUND,totalGames:-1}});
-      }
-    }
-    await Game.deleteOne({gameId:req.params.gameId});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-// ===== Admin Routes =====
-app.get('/api/admin/stats', isAdmin, async(_,res)=>{
-  try {
-    const [tu,tg,pd,pw]=await Promise.all([
-      User.countDocuments(),
-      Game.countDocuments({status:'completed'}),
-      Deposit.countDocuments({status:'pending'}),
-      Withdrawal.countDocuments({status:'pending'})
-    ]);
-    const [depAgg,wdAgg]=await Promise.all([
-      Deposit.aggregate([{$match:{status:'confirmed'}},{$group:{_id:null,t:{$sum:'$amount'}}}]),
-      Withdrawal.aggregate([{$match:{status:'confirmed'}},{$group:{_id:null,t:{$sum:'$amount'}}}])
-    ]);
-    res.json({
-      totalUsers:tu,totalGames:tg,pendingDeposits:pd,pendingWithdrawals:pw,
-      activeGames:activeGames.size,queueLength:waitingQueue.length,
-      totalDeposited:depAgg[0]?.t||0,totalWithdrawn:wdAgg[0]?.t||0
-    });
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.get('/api/admin/settings', isAdmin, async(_,res)=>{
-  const maint = await getSetting('maintenance',false);
-  const allBotMode = await getSetting('allBotMode', false);
-  const fakeNotifications = await getSetting('fakeNotifications', false);
-  const fakeNotifInterval = await getSetting('fakeNotifInterval', 3);
-  res.json({maintenance:maint, allBotMode, fakeNotifications, fakeNotifInterval, entryFee:ENTRY_FEE, winPrize:WIN_PRIZE, drawRefund:DRAW_REFUND, turnSeconds:TURN_SECONDS});
-});
-
-app.post('/api/admin/maintenance', isAdmin, async(req,res)=>{
-  await setSetting('maintenance',!!req.body.enabled);
-  res.json({success:true,maintenance:!!req.body.enabled});
-});
-
-app.get('/api/admin/allbotmode', isAdmin, async(req,res)=>{
-  const allBotMode = await getSetting('allBotMode', false);
-  res.json({allBotMode});
-});
-
-app.post('/api/admin/allbotmode', isAdmin, async(req,res)=>{
-  await setSetting('allBotMode', !!req.body.enabled);
-  res.json({success:true, allBotMode: !!req.body.enabled});
-});
-
-// Fake Notifications toggle
-app.get('/api/admin/fakenotifications', isAdmin, async(req,res)=>{
-  const fakeNotifications = await getSetting('fakeNotifications', false);
-  res.json({fakeNotifications});
-});
-
-app.post('/api/admin/fakenotifications', isAdmin, async(req,res)=>{
-  await setSetting('fakeNotifications', !!req.body.enabled);
-  res.json({success:true, fakeNotifications: !!req.body.enabled});
-});
-
-// Set fake notification interval (minutes)
-app.post('/api/admin/fakenotifinterval', isAdmin, async(req,res)=>{
-  const mins = Math.max(1, Number(req.body.interval) || 3);
-  await setSetting('fakeNotifInterval', mins);
-  // Restart scheduler with new interval
-  scheduleFakeNotification();
-  res.json({success:true, fakeNotifInterval: mins});
-});
-
-app.get('/api/admin/deposits', isAdmin, async(req,res)=>{
-  try {
-    const deps=await Deposit.find({status:req.query.status||'pending'}).sort({createdAt:-1}).limit(50).lean();
-    const out=await Promise.all(deps.map(async d=>{
-      const u=await User.findOne({telegramId:d.userId}).select('firstName username').lean();
-      return {...d,userName:u?.firstName||u?.username||String(d.userId)};
-    }));
-    res.json(out);
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/deposits/:id/confirm', isAdmin, async(req,res)=>{
-  try {
-    const dep=await Deposit.findById(req.params.id);
-    if (!dep) return res.status(404).json({error:'Not found'});
-    if (dep.status!=='pending') return res.status(400).json({error:'Already processed'});
-    dep.status='confirmed'; dep.processedAt=new Date(); await dep.save();
-    await User.findOneAndUpdate({telegramId:dep.userId},{$inc:{balance:dep.amount}});
-    const user=await User.findOne({telegramId:dep.userId}).lean();
-    if (user?.referredBy) {
-      const prevDeps=await Deposit.countDocuments({userId:dep.userId,status:'confirmed',_id:{$ne:dep._id}});
-      if (prevDeps===0) {
-        await User.findOneAndUpdate({telegramId:user.referredBy},{$inc:{balance:100}});
-        if (bot) bot.telegram.sendMessage(user.referredBy,
-          `🎉 သင့် referral မှ ငွေဖြည့်သောကြောင့် <b>100 MMK</b> ရရှိပါပြီ!`,
-          {parse_mode:'HTML'}).catch(()=>{});
-      }
-    }
-    if (bot) bot.telegram.sendMessage(dep.userId,
-      `✅ ငွေ ${dep.amount.toLocaleString()} MMK သွင်းမှု အတည်ပြုပြီး!\n\nသင့်လက်ကျန်ငွေ ပေါင်းထည့်ပြီး 🎉`,
-      Markup.inlineKeyboard([[Markup.button.webApp('🎮 ကစားမည်', FRONTEND_URL)]]) ).catch(()=>{});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/deposits/:id/reject', isAdmin, async(req,res)=>{
-  try {
-    const { reason } = req.body;
-    const dep=await Deposit.findByIdAndUpdate(req.params.id,{status:'rejected',processedAt:new Date()},{new:true});
-    if (!dep) return res.status(404).json({error:'Not found'});
-    const reasonText = reason ? `\nအကြောင်းပြချက်: ${reason}` : '';
-    if (bot) bot.telegram.sendMessage(dep.userId,
-      `❌ ငွေ ${dep.amount.toLocaleString()} MMK သွင်းမှု ပယ်ချပြီ\nTxn: ${dep.transactionId}${reasonText}`).catch(()=>{});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.get('/api/admin/withdrawals', isAdmin, async(req,res)=>{
-  try {
-    const wds=await Withdrawal.find({status:req.query.status||'pending'}).sort({createdAt:-1}).limit(50).lean();
-    const out=await Promise.all(wds.map(async w=>{
-      const u=await User.findOne({telegramId:w.userId}).select('firstName username balance').lean();
-      return {...w,userName:u?.firstName||u?.username||String(w.userId),userBalance:u?.balance};
-    }));
-    res.json(out);
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/withdrawals/:id/confirm', isAdmin, async(req,res)=>{
-  try {
-    const wd=await Withdrawal.findById(req.params.id);
-    if (!wd) return res.status(404).json({error:'Not found'});
-    if (wd.status!=='pending') return res.status(400).json({error:'Already processed'});
-    wd.status='confirmed'; wd.processedAt=new Date(); await wd.save();
-    if (bot) bot.telegram.sendMessage(wd.userId,
-      `✅ ငွေ ${wd.amount.toLocaleString()} MMK ထုတ်မှု အတည်ပြုပြီး!\nKPay: ${wd.kpayNumber} 🎉`).catch(()=>{});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/withdrawals/:id/reject', isAdmin, async(req,res)=>{
-  try {
-    const wd=await Withdrawal.findById(req.params.id);
-    if (!wd) return res.status(404).json({error:'Not found'});
-    if (wd.status!=='pending') return res.status(400).json({error:'Already processed'});
-    wd.status='rejected'; wd.processedAt=new Date(); await wd.save();
-    await User.findOneAndUpdate({telegramId:wd.userId},{$inc:{balance:wd.amount}});
-    if (bot) bot.telegram.sendMessage(wd.userId,
-      `❌ ငွေ ${wd.amount.toLocaleString()} MMK ထုတ်မှု ပယ်ချပြီး ငွေပြန်အမ်းပြီ`).catch(()=>{});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.get('/api/admin/users', isAdmin, async(req,res)=>{
-  try {
-    const {search,page=1}=req.query;
-    const q=search?{$or:[
-      {telegramId:isNaN(search)?-1:parseInt(search)},
-      {username:{$regex:search,$options:'i'}},
-      {firstName:{$regex:search,$options:'i'}}
-    ]}:{};
-    const users=await User.find(q).sort({createdAt:-1}).skip((page-1)*20).limit(20).lean();
-    const total=await User.countDocuments(q);
-    res.json({users,total,pages:Math.ceil(total/20)});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-// High Balancers endpoint (balance >= 4000)
-app.get('/api/admin/high-balancers', isAdmin, async(req,res)=>{
-  try {
-    const highUsers = await User.find({ balance: { $gte: 4000 }, isBanned: { $ne: true } })
-      .sort({ balance: -1 })
-      .lean();
-    const enriched = await Promise.all(highUsers.map(async u => {
-      const deposits = await Deposit.aggregate([
-        { $match: { userId: u.telegramId, status: 'confirmed' } },
-        { $group: { _id: null, total: { $sum: '$amount' } } }
-      ]);
-      const totalDeposited = deposits[0]?.total || 0;
-      return {
-        telegramId: u.telegramId,
-        username: u.username,
-        firstName: u.firstName,
-        balance: u.balance,
-        totalDeposited,
-        botMode: u.botMode,
-        isBanned: u.isBanned
-      };
-    }));
-    res.json(enriched);
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/users/:tid/balance', isAdmin, async(req,res)=>{
-  try {
-    const {amount,reason}=req.body;
-    const u=await User.findOneAndUpdate({telegramId:parseInt(req.params.tid)},{$inc:{balance:parseInt(amount)}},{new:true});
-    if (!u) return res.status(404).json({error:'Not found'});
-    if (bot) {
-      const sign=amount>0?'+':'';
-      bot.telegram.sendMessage(u.telegramId,
-        `💰 Admin မှ ${sign}${parseInt(amount).toLocaleString()} MMK\n${reason?`မှတ်ချက်: ${reason}`:''}\nလက်ကျန်: ${u.balance.toLocaleString()} MMK`).catch(()=>{});
-    }
-    res.json({success:true,newBalance:u.balance});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/users/:tid/ban', isAdmin, async(req,res)=>{
-  try {
-    const {ban}=req.body;
-    const u=await User.findOneAndUpdate({telegramId:parseInt(req.params.tid)},{isBanned:!!ban},{new:true});
-    if (!u) return res.status(404).json({error:'Not found'});
-    if (bot&&ban) bot.telegram.sendMessage(u.telegramId,'🚫 ကောင်ပိတ်ဆို့ထားပါသည်။ Admin ကို ဆက်သွယ်ပါ').catch(()=>{});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/users/:tid/botmode', isAdmin, async(req,res)=>{
-  try {
-    const {enabled}=req.body;
-    const u=await User.findOneAndUpdate({telegramId:parseInt(req.params.tid)},{botMode:!!enabled},{new:true});
-    if (!u) return res.status(404).json({error:'User not found'});
-    res.json({success:true, botMode:u.botMode});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/broadcast', isAdmin, async(req,res)=>{
-  try {
-    const {message,buttonText,buttonUrl}=req.body;
-    if (!message) return res.status(400).json({error:'Message required'});
-    res.json({success:true,msg:'Broadcast started in background'});
-    setImmediate(async()=>{
-      const users=await User.find({isBanned:{$ne:true}}).select('telegramId').lean();
-      const kb=buttonText&&buttonUrl?{inline_keyboard:[[{text:buttonText,url:buttonUrl}]]}:undefined;
-      let sent=0,fail=0;
-      const CHUNK=30;
-      for (let i=0;i<users.length;i+=CHUNK) {
-        const batch=users.slice(i,i+CHUNK);
-        await Promise.allSettled(batch.map(async u=>{
-          try {
-            await bot.telegram.sendMessage(u.telegramId,message,{parse_mode:'HTML',reply_markup:kb});
-            sent++;
-          } catch(e){fail++;}
-        }));
-        if (i+CHUNK<users.length) await new Promise(r=>setTimeout(r,1000));
-      }
-      console.log(`Broadcast done: ${sent} sent, ${fail} failed / ${users.length} total`);
-    });
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-app.post('/api/admin/message', isAdmin, async(req,res)=>{
-  try {
-    const {telegramId,message}=req.body;
-    if (!telegramId||!message) return res.status(400).json({error:'Missing fields'});
-    await bot.telegram.sendMessage(parseInt(telegramId),message,{parse_mode:'HTML'});
-    res.json({success:true});
-  } catch(e){ res.status(500).json({error:e.message}); }
-});
-
-
-// ===== Redeem Code API =====
-
-// User redeems a code
-app.post('/api/redeem', async(req, res) => {
-  try {
-    const { telegramId, code } = req.body;
-    if (!telegramId || !code)
-      return res.status(400).json({ error: 'telegramId နှင့် code လိုအပ်သည်' });
-
-    const tid = parseInt(telegramId);
-    const user = await User.findOne({ telegramId: tid }).lean();
-    if (!user) return res.status(404).json({ error: 'User မတွေ့ပါ' });
-    if (user.isBanned) return res.status(403).json({ error: '🚫 ကောင်ပိတ်ဆို့ထားသည်' });
-
-    const rc = await RedeemCode.findOne({ code: code.toUpperCase().trim() });
-    if (!rc || !rc.isActive)
-      return res.status(400).json({ error: '❌ Code မမှန်ပါ သို့မဟုတ် ပိတ်ထားပြီ' });
-
-    if (rc.usedBy.includes(tid))
-      return res.status(400).json({ error: '⚠️ ဤ Code ကို သင် အသုံးပြုပြီးသားဖြစ်သည်' });
-
-    if (rc.maxUses > 0 && rc.usedBy.length >= rc.maxUses)
-      return res.status(400).json({ error: '⚠️ Code ကုန်ဆုံးပြီ' });
-
-    // Atomic: add user to usedBy and credit balance
-    await RedeemCode.updateOne({ _id: rc._id }, { $push: { usedBy: tid } });
-    const updated = await User.findOneAndUpdate(
-      { telegramId: tid },
-      { $inc: { balance: rc.amount } },
-      { new: true }
-    );
-
-    // Notify admin
-    if (bot) bot.telegram.sendMessage(ADMIN_ID,
-      `🎟️ Redeem Code အသုံးပြု
-👤 ${user.firstName||user.username} (${tid})
-🎫 Code: <code>${rc.code}</code>
-💰 ${rc.amount.toLocaleString()} MMK`,
-      { parse_mode: 'HTML' }).catch(() => {});
-
-    res.json({ success: true, amount: rc.amount, newBalance: updated.balance });
-  } catch(e) { console.error('redeem err:', e); res.status(500).json({ error: 'Server error' }); }
-});
-
-// Admin: create code
-app.post('/api/admin/redeem/create', isAdmin, async(req, res) => {
-  try {
-    const { code, amount, maxUses } = req.body;
-    if (!code || !amount) return res.status(400).json({ error: 'code နှင့် amount လိုသည်' });
-    const amt = parseInt(amount);
-    if (isNaN(amt) || amt <= 0) return res.status(400).json({ error: 'Amount မှားနေသည်' });
-    const mx = parseInt(maxUses) || 1;
-    const rc = await new RedeemCode({
-      code: code.toUpperCase().trim(), amount: amt, maxUses: mx
-    }).save();
-    res.json({ success: true, code: rc });
-  } catch(e) {
-    if (e.code === 11000) return res.status(400).json({ error: 'ထို Code ရှိပြီးသားဖြစ်သည်' });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Admin: list all codes
-app.get('/api/admin/redeem/list', isAdmin, async(req, res) => {
-  try {
-    const codes = await RedeemCode.find().sort({ createdAt: -1 }).lean();
-    res.json(codes);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Admin: toggle code active/inactive
-app.post('/api/admin/redeem/:id/toggle', isAdmin, async(req, res) => {
-  try {
-    const rc = await RedeemCode.findById(req.params.id);
-    if (!rc) return res.status(404).json({ error: 'Not found' });
-    rc.isActive = !rc.isActive;
-    await rc.save();
-    res.json({ success: true, isActive: rc.isActive });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Admin: delete code
-app.delete('/api/admin/redeem/:id', isAdmin, async(req, res) => {
-  try {
-    await RedeemCode.findByIdAndDelete(req.params.id);
-    res.json({ success: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ===== Self-ping =====
-setInterval(()=>{
-  try { https.get(`${BACKEND_URL}/health`,()=>{}).on('error',()=>{}); } catch(e){}
-}, 5*60*1000);
-
-// ===== Global unhandled rejection/exception handlers =====
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-
-const PORT = process.env.PORT||3000;
-server.listen(PORT, ()=>console.log(`🚀 Server on port ${PORT}`));
+// Graceful shutdown
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));

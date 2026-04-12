@@ -107,16 +107,87 @@ app.listen(port, () => console.log(`✅ Server is listening on port ${port}`));
 const CHANNELS = ['@Bitcoinmyanmarmining', '@BitCoinMyan']; // Channel ၂ ခု
 
 // --- 6. Helpers ---
-async function isJoined(ctx) {
-    for (const ch of CHANNELS) {
+
+// ══════════════════════════════════════════════════════════
+//  ① Custom Error — Telegram API လုံးဝ မဆက်သွယ်နိုင်သောအခါ
+// ══════════════════════════════════════════════════════════
+class TelegramApiError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'TelegramApiError';
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  ② In-Memory Cache — userId → { joined, expiresAt }
+//     User က join ထားတယ်ဆိုတာ သေချာရင် 5 မိနစ် မှတ်ထား
+// ══════════════════════════════════════════════════════════
+const joinCache = new Map();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 မိနစ်
+
+// Cache ကို ရှင်းလင်းရန် (memory leak ကာကွယ်ရန်) — 10 မိနစ်တိုင်း run
+setInterval(() => {
+    const now = Date.now();
+    for (const [userId, data] of joinCache.entries()) {
+        if (now >= data.expiresAt) joinCache.delete(userId);
+    }
+}, 10 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════
+//  ③ Exponential Backoff Retry Helper
+//     Network error ဆိုရင် 1s → 2s → 4s စောင့်ပြီး 3 ကြိမ် retry
+// ══════════════════════════════════════════════════════════
+const RETRYABLE_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'ECONNREFUSED', 'EAI_AGAIN']);
+
+async function withRetry(fn, retries = 3, baseDelayMs = 1000) {
+    let lastError;
+    for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-            const member = await ctx.telegram.getChatMember(ch, ctx.from.id);
-            if (['left', 'kicked'].includes(member.status)) return false;
-        } catch (e) { 
-            console.error(`Channel check error for ${ch}:`, e);
-            return false; 
+            return await fn();
+        } catch (e) {
+            lastError = e;
+            const isNetworkError =
+                RETRYABLE_CODES.has(e.code) ||
+                (e.message && (e.message.includes('ETIMEDOUT') || e.message.includes('socket hang up')));
+
+            if (!isNetworkError || attempt === retries) break;
+
+            const delay = baseDelayMs * Math.pow(2, attempt - 1); // 1000ms, 2000ms, 4000ms
+            console.warn(`⚠️ [Retry ${attempt}/${retries}] ${e.code || e.message} — ${delay}ms စောင့်သည်...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
+    throw new TelegramApiError(
+        `Telegram API ${retries} ကြိမ် retry လုပ်လည်း ဆက်သွယ်မရပါ: ${lastError?.message}`
+    );
+}
+
+// ══════════════════════════════════════════════════════════
+//  ④ isJoined — Cache + Retry + မှန်ကန်သော Error Handling
+// ══════════════════════════════════════════════════════════
+async function isJoined(ctx) {
+    const userId = ctx.from.id;
+
+    // Cache hit — 5 မိနစ်အတွင်း join ထားတယ်ဆိုတာ သေချာနေရင် API မခေါ်တော့
+    const cached = joinCache.get(userId);
+    if (cached && Date.now() < cached.expiresAt) {
+        console.log(`✅ [Cache Hit] User ${userId} — API call ကျော်သည်`);
+        return cached.joined;
+    }
+
+    // Cache miss — API ကို retry နဲ့ စစ်ဆေး
+    for (const ch of CHANNELS) {
+        // TelegramApiError ကို ဒီမှာ catch မလုပ်ဘဲ caller ဆီ ပစ်တင်သည်
+        const member = await withRetry(() => ctx.telegram.getChatMember(ch, userId));
+        if (['left', 'kicked'].includes(member.status)) {
+            // join မထားဘူး → cache မသိမ်း (နောက်တစ်ကြိမ် နှိပ်ရင် ထပ်စစ်ရန်)
+            return false;
+        }
+    }
+
+    // Channel ၂ ခုလုံး join ထားတယ် → cache ထဲ သိမ်း
+    joinCache.set(userId, { joined: true, expiresAt: Date.now() + CACHE_TTL_MS });
+    console.log(`✅ [Cache Set] User ${userId} — ${CACHE_TTL_MS / 60000} မိနစ် မှတ်ထားသည်`);
     return true;
 }
 
@@ -164,7 +235,22 @@ bot.start(async (ctx) => {
 
 bot.action('check_join', async (ctx) => {
     try {
-        if (await isJoined(ctx)) {
+        // ── isJoined မှ TelegramApiError ပစ်လာနိုင်သောကြောင့် သီးသန့် ကိုင်တွယ် ──
+        let joined;
+        try {
+            joined = await isJoined(ctx);
+        } catch (e) {
+            if (e instanceof TelegramApiError) {
+                console.error(`🔴 [check_join] TelegramApiError: ${e.message}`);
+                return ctx.answerCbQuery(
+                    "⚠️ Bot တွင် ယာယီချိတ်ဆက်မှု အခက်အခဲရှိနေပါသဖြင့် ခေတ္တစောင့်ဆိုင်းပြီးမှ ထပ်မံကြိုးစားကြည့်ပါခင်ဗျာ။",
+                    { show_alert: true }
+                ).catch(() => {});
+            }
+            throw e; // မမျှော်လင့်သော error — ပြင်ပ catch ဆီ ပစ်
+        }
+
+        if (joined) {
             const user = await User.findOne({ tgId: ctx.from.id });
             
             // Referral Bonus Logic - Channel join ထားမှသာ ရမည်
@@ -270,8 +356,18 @@ bot.hears('📤 ငွေထုတ်ယူရန်', async (ctx) => {
     if (!user) return;
     if (user.isBanned) return;
     
-    // Channel Join ထားရဲ့လား ထပ်စစ်
-    if (!(await isJoined(ctx))) {
+    // ── Channel Join စစ်ဆေး — TelegramApiError ကို သီးသန့် ကိုင်တွယ် ──
+    let joined;
+    try {
+        joined = await isJoined(ctx);
+    } catch (e) {
+        if (e instanceof TelegramApiError) {
+            console.error(`🔴 [withdraw] TelegramApiError: ${e.message}`);
+            return ctx.reply("⚠️ Bot တွင် ယာယီချိတ်ဆက်မှု အခက်အခဲရှိနေပါသဖြင့် ခေတ္တစောင့်ဆိုင်းပြီးမှ ထပ်မံကြိုးစားကြည့်ပါခင်ဗျာ။").catch(() => {});
+        }
+        throw e;
+    }
+    if (!joined) {
         return ctx.reply("⚠️ ငွေထုတ်ယူရန်အတွက် Channel ၂ ခုလုံးကို Join ထားရပါမည်။").catch(()=>{});
     }
     

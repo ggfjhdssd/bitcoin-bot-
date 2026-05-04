@@ -684,27 +684,61 @@ bot.on('message', async ctx => {
 bot.command('admin', async ctx => {
     if (!isAdmin(ctx)) return;
     const msg =
-`🛠 **Admin Commands**
+`🛠 *Admin Panel — သုံးနည်းများ*
 
-👥 **User Management**
-/users — User statistics
-/addbalance <id> <amount> — Balance ထည့်
-/ban <id> — User ပိတ်
-/unban <id> — User ဖွင့်
-/broadcast <msg> — အားလုံးကို message ပို့
+━━━━━━━━━━━━━━━━━━━
+👥 *User Management*
+━━━━━━━━━━━━━━━━━━━
+📊 /users
+   └ User စာရင်း ကြည့်မည်
 
-📋 **Task Reward**
-/settask1 <amount> — Task 1 ရမည့်ငွေ ပြောင်း
-/settask2 <amount> — Task 2 ရမည့်ငွေ ပြောင်း
-/settask3 <amount> — Task 3 ရမည့်ငွေ ပြောင်း
-/settask4 <amount> — Task 4 ရမည့်ငွေ ပြောင်း
+💰 /addbalance \`<userId>\` \`<amount>\`
+   └ ဥပမာ: /addbalance 123456 5000
+   └ User ကို Balance ထည့်
 
-📢 **VPN Note**
-/open — VPN ကြော်ငြာ note ပြမည်
-/close — VPN ကြော်ငြာ note ဖျောက်မည်
+🚫 /ban \`<userId>\`
+   └ ဥပမာ: /ban 123456
+   └ User ကို ပိတ်
 
-💰 **Withdrawals**
-/withdrawals — Pending withdrawals ကြည့်`;
+✅ /unban \`<userId>\`
+   └ ဥပမာ: /unban 123456
+   └ User ကို ပြန်ဖွင့်
+
+📨 /broadcast \`<message>\`
+   └ ဥပမာ: /broadcast မင်္ဂလာပါ!
+   └ User အားလုံးကို message ပို့
+
+━━━━━━━━━━━━━━━━━━━
+📋 *Task ရမည့်ငွေ ပြောင်း*
+━━━━━━━━━━━━━━━━━━━
+/settask1 \`<amount>\`
+   └ ဥပမာ: /settask1 300
+   └ Task 1 ကြော်ငြာကြည့်ရင် ရမည့်ငွေ
+
+/settask2 \`<amount>\`
+   └ Task 2 ရမည့်ငွေ
+
+/settask3 \`<amount>\`
+   └ Task 3 ရမည့်ငွေ
+
+/settask4 \`<amount>\`
+   └ Task 4 ရမည့်ငွေ
+
+━━━━━━━━━━━━━━━━━━━
+📢 *VPN Note Control*
+━━━━━━━━━━━━━━━━━━━
+/open
+   └ Website မှာ VPN ကြော်ငြာ note ပြမည်
+
+/close
+   └ Website မှာ VPN note ဖျောက်မည်
+
+━━━━━━━━━━━━━━━━━━━
+💸 *Withdrawals*
+━━━━━━━━━━━━━━━━━━━
+/withdrawals
+   └ Pending ငွေထုတ်မှု စာရင်းကြည့်`;
+
     ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 

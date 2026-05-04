@@ -9,6 +9,16 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// CORS — Vercel frontend မှ Render backend ကို fetch လုပ်ခွင့်ပေးသည်
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+    next();
+});
+
 app.use(express.static(__dirname)); // index.html က bot.js နဲ့ ဘေးချင်းယှဉ်ရှိရပါမယ်
 
 app.get('/', (req, res) => {
@@ -149,7 +159,7 @@ app.post('/api/reward-user', async (req, res) => {
         );
         if (updatedUser) {
             try { await bot.telegram.sendMessage(userId, `💰 ကြော်ငြာ (Slot ${slot || ''}) ကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!`); } catch (e) {}
-            return res.json({ success: true, newBalance: updatedUser.balance });
+            return res.json({ success: true, newBalance: updatedUser.balance, rewardAmt: 500 });
         }
         res.status(404).json({ error: 'User not found' });
     } catch (error) {

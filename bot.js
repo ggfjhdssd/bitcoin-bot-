@@ -756,16 +756,44 @@ bot.command('close', async ctx => {
 });
 
 // ── Admin: /settask1 ~ /settask4 ──────────────────────────────────
-[1, 2, 3, 4].forEach(n => {
-    bot.command(`settask${n}`, async ctx => {
-        if (!isAdmin(ctx)) return;
-        const parts = ctx.message.text.split(' ');
-        if (parts.length < 2) return ctx.reply(`Usage: /settask${n} <amount>`);
-        const amt = parseInt(parts[1]);
-        if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
-        await setCfg(`task${n}_reward`, amt);
-        ctx.reply(`✅ Task ${n} ရမည့်ငွေ: **${amt.toLocaleString()} ကျပ်** သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
-    });
+bot.command('settask1', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask1 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task1_reward', amt);
+    ctx.reply(`✅ Task 1 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+bot.command('settask2', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask2 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task2_reward', amt);
+    ctx.reply(`✅ Task 2 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+bot.command('settask3', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask3 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task3_reward', amt);
+    ctx.reply(`✅ Task 3 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+bot.command('settask4', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask4 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task4_reward', amt);
+    ctx.reply(`✅ Task 4 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
 });
 
 // ─── Launch ────────────────────────────────────────────────────────

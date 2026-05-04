@@ -4,28 +4,35 @@ const mongoose = require('mongoose');
 const express = require('express');
 const path = require('path');
 
-// ─── Express Setup ───────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//   EXPRESS SETUP
+// ═══════════════════════════════════════════════════════════════
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
-app.use(express.static(__dirname)); // serves index.html
+app.use(express.static(__dirname));
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// ─── Bot ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//   BOT + CONFIG
+// ═══════════════════════════════════════════════════════════════
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const ADMIN_ID = String(process.env.ADMIN_ID || '').trim();
 const LOG_GROUP_ID = process.env.LOG_GROUP_ID;
+const MINI_APP_URL = process.env.MINI_APP_URL || 'https://kyawngarrapp.vercel.app';
 
-// ─── MongoDB ─────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//   MONGODB
+// ═══════════════════════════════════════════════════════════════
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ Database Connected!'))
     .catch(err => { console.error('❌ DB Error:', err); process.exit(1); });
 
-// ─── Schemas ─────────────────────────────────────────────────────
+// ── Schemas ────────────────────────────────────────────────────
 const userSchema = new mongoose.Schema({
     tgId:           { type: Number, unique: true },
     username:       String,
@@ -34,8 +41,8 @@ const userSchema = new mongoose.Schema({
     referralCount:  { type: Number, default: 0 },
     wallet:         { type: String, default: '⛔ မသတ်မှတ်ရသေးပါ' },
     lastBonus:      { type: Date,   default: null },
-    lastSpin:       { type: Date,   default: null },  // ← new: daily spin tracking
-    isBanned:       { type: Boolean,default: false },
+    lastSpin:       { type: Date,   default: null },
+    isBanned:       { type: Boolean, default: false },
     state:          { type: String, default: 'none' },
     tempData:       { type: Object, default: {} },
     lastActive:     { type: Date,   default: Date.now },
@@ -43,20 +50,11 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// ─── Config Schema (VPN note toggle + task rewards) ──────────────
 const configSchema = new mongoose.Schema({
     key:   { type: String, unique: true },
     value: mongoose.Schema.Types.Mixed
 });
 const Config = mongoose.model('Config', configSchema);
-
-async function getCfg(key, def) {
-    const doc = await Config.findOne({ key });
-    return doc ? doc.value : def;
-}
-async function setCfg(key, value) {
-    await Config.findOneAndUpdate({ key }, { value }, { upsert: true });
-}
 
 const withdrawalSchema = new mongoose.Schema({
     userId:     Number,
@@ -76,7 +74,18 @@ const withdrawalSchema = new mongoose.Schema({
 });
 const Withdrawal = mongoose.model('Withdrawal', withdrawalSchema);
 
-// ─── CORS headers for Mini App ───────────────────────────────────
+// ── Config helpers ─────────────────────────────────────────────
+async function getCfg(key, def) {
+    const doc = await Config.findOne({ key });
+    return doc ? doc.value : def;
+}
+async function setCfg(key, value) {
+    await Config.findOneAndUpdate({ key }, { value }, { upsert: true });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//   CORS
+// ═══════════════════════════════════════════════════════════════
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Content-Type');
@@ -84,24 +93,22 @@ app.use((req, res, next) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-//   API ENDPOINTS (Mini App)
+//   API ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
 
-// ── GET USER INFO (balance + profile) ────────────────────────────
+// ── GET USER INFO ──────────────────────────────────────────────
 app.post('/api/get-user', async (req, res) => {
     try {
         const { userId } = req.body;
         if (!userId) return res.status(400).json({ error: 'userId required' });
-
-        let user = await User.findOne({ tgId: Number(userId) });
+        const user = await User.findOne({ tgId: Number(userId) });
         if (!user) return res.json({ balance: 0, referralCount: 0, wallet: '', lastSpin: null });
-
         res.json({
-            balance:      user.balance,
-            referralCount:user.referralCount,
-            wallet:       user.wallet,
-            lastSpin:     user.lastSpin,
-            username:     user.username,
+            balance:       user.balance,
+            referralCount: user.referralCount,
+            wallet:        user.wallet,
+            lastSpin:      user.lastSpin,
+            username:      user.username,
         });
     } catch (e) {
         console.error('❌ /api/get-user:', e);
@@ -109,27 +116,23 @@ app.post('/api/get-user', async (req, res) => {
     }
 });
 
-// ── REWARD USER (Ad watch) ────────────────────────────────────────
+// ── REWARD USER (Ad watch) ─────────────────────────────────────
 app.post('/api/reward-user', async (req, res) => {
     try {
         const { userId, slot } = req.body;
         if (!userId) return res.status(400).json({ error: 'userId required' });
-
-        // Get dynamic reward for this task slot (default 500)
         const rewardAmt = await getCfg(`task${slot || 1}_reward`, 500);
-
         const updated = await User.findOneAndUpdate(
             { tgId: Number(userId) },
             { $inc: { balance: rewardAmt } },
             { new: true }
         );
-
         if (!updated) return res.status(404).json({ error: 'User not found' });
-
         try {
-            await bot.telegram.sendMessage(userId, `💰 ကြော်ငြာ (Task ${slot || 1}) ကြည့်ရှုမှုအတွက် ${rewardAmt.toLocaleString()} ကျပ် လက်ခံရရှိပါပြီ! 🎉`);
-        } catch (e) { /* user may have blocked bot */ }
-
+            await bot.telegram.sendMessage(userId,
+                `💰 ကြော်ငြာ (Task ${slot || 1}) ကြည့်ရှုမှုအတွက် ${rewardAmt.toLocaleString()} ကျပ် လက်ခံရရှိပါပြီ! 🎉`
+            );
+        } catch (e) {}
         res.json({ success: true, newBalance: updated.balance, rewardAmt });
     } catch (e) {
         console.error('❌ /api/reward-user:', e);
@@ -137,7 +140,7 @@ app.post('/api/reward-user', async (req, res) => {
     }
 });
 
-// ── GET TASK REWARDS (for frontend) ──────────────────────────────
+// ── TASK CONFIG (for frontend) ─────────────────────────────────
 app.get('/api/task-config', async (req, res) => {
     try {
         const [r1, r2, r3, r4, vpnOpen] = await Promise.all([
@@ -153,7 +156,7 @@ app.get('/api/task-config', async (req, res) => {
     }
 });
 
-// Legacy reward endpoint (backward compat)
+// ── LEGACY reward endpoint ─────────────────────────────────────
 app.all('/reward-user', async (req, res) => {
     const userId = req.query.userId || req.body.userId;
     if (!userId) return res.status(400).send('User ID required');
@@ -167,12 +170,11 @@ app.all('/reward-user', async (req, res) => {
         try { await bot.telegram.sendMessage(userId, '💰 ကြော်ငြာကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!'); } catch (e) {}
         res.json({ success: true, newBalance: updated.balance });
     } catch (e) {
-        console.error('❌ /reward-user:', e);
         res.status(500).send('Internal Error');
     }
 });
 
-// Legacy get-balance (backward compat)
+// ── LEGACY get-balance ─────────────────────────────────────────
 app.post('/get-balance', async (req, res) => {
     try {
         const { userId } = req.body;
@@ -184,7 +186,7 @@ app.post('/get-balance', async (req, res) => {
     }
 });
 
-// ── DAILY SPIN WHEEL ─────────────────────────────────────────────
+// ── DAILY SPIN ─────────────────────────────────────────────────
 const SPIN_PRIZES = [100, 50, 200, 300, 500, 50, 100, 200];
 
 function isSameDay(d1, d2) {
@@ -197,44 +199,31 @@ app.post('/api/spin', async (req, res) => {
     try {
         const { userId } = req.body;
         if (!userId) return res.status(400).json({ error: 'userId required' });
-
         const user = await User.findOne({ tgId: Number(userId) });
         if (!user) return res.status(404).json({ error: 'User not found' });
         if (user.isBanned) return res.status(403).json({ error: 'Banned' });
-
-        // ── Daily limit check ─────────────────────────────────────
         if (user.lastSpin && isSameDay(new Date(user.lastSpin), new Date())) {
             return res.json({ success: false, error: 'already_spun' });
         }
-
-        // ── Pick prize with weighted randomness ────────────────────
-        // 500 has 10% chance, 300 has 15%, 200 has 25%, rest 50/100
-        const weights = [15, 20, 15, 10, 8, 20, 7, 5]; // indexes map to SPIN_PRIZES
-        const totalW = weights.reduce((a,b)=>a+b,0);
+        const weights = [15, 20, 15, 10, 8, 20, 7, 5];
+        const totalW = weights.reduce((a, b) => a + b, 0);
         let rand = Math.random() * totalW;
         let prizeIndex = 0;
-        for (let i=0; i<weights.length; i++) {
+        for (let i = 0; i < weights.length; i++) {
             rand -= weights[i];
             if (rand <= 0) { prizeIndex = i; break; }
         }
         const prize = SPIN_PRIZES[prizeIndex];
-
-        // ── Update user ────────────────────────────────────────────
         const updated = await User.findOneAndUpdate(
             { tgId: Number(userId) },
             { $inc: { balance: prize }, $set: { lastSpin: new Date() } },
             { new: true }
         );
-
-        // ── Notify via bot ─────────────────────────────────────────
         try {
             await bot.telegram.sendMessage(userId,
-                `🎰 Spin Wheel ဆုကြေး!\n\n` +
-                `🎉 ${prize} MMK ရရှိပါပြီ!\n` +
-                `💰 လက်ကျန်ငွေ: ${updated.balance.toLocaleString()} MMK`
+                `🎰 Spin Wheel ဆုကြေး!\n\n🎉 ${prize} MMK ရရှိပါပြီ!\n💰 လက်ကျန်ငွေ: ${updated.balance.toLocaleString()} MMK`
             );
         } catch (e) {}
-
         res.json({ success: true, prize, newBalance: updated.balance });
     } catch (e) {
         console.error('❌ /api/spin:', e);
@@ -242,18 +231,14 @@ app.post('/api/spin', async (req, res) => {
     }
 });
 
-// ─── Start server ─────────────────────────────────────────────────
+// ── Start server ───────────────────────────────────────────────
 app.listen(port, () => console.log(`✅ Server listening on port ${port}`));
 
 // ═══════════════════════════════════════════════════════════════
-//   TELEGRAM BOT LOGIC
+//   TELEGRAM BOT
 // ═══════════════════════════════════════════════════════════════
 
 const CHANNELS = ['@Bitcoinmyanmarmining', '@BitCoinMyan'];
-
-class TelegramApiError extends Error {
-    constructor(message) { super(message); this.name = 'TelegramApiError'; }
-}
 
 const joinCache = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -265,20 +250,21 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 const RETRYABLE_CODES = new Set(['ETIMEDOUT','ECONNRESET','ENOTFOUND','ECONNREFUSED','EAI_AGAIN']);
-async function withRetry(fn, retries=3, baseDelay=1000) {
+async function withRetry(fn, retries = 3, baseDelay = 1000) {
     let lastError;
-    for (let i=1; i<=retries; i++) {
+    for (let i = 1; i <= retries; i++) {
         try { return await fn(); }
         catch (e) {
             lastError = e;
-            const net = RETRYABLE_CODES.has(e.code) || (e.message && (e.message.includes('ETIMEDOUT')||e.message.includes('socket hang up')));
+            const net = RETRYABLE_CODES.has(e.code) ||
+                (e.message && (e.message.includes('ETIMEDOUT') || e.message.includes('socket hang up')));
             if (!net || i === retries) break;
-            const delay = baseDelay * Math.pow(2, i-1);
-            console.warn(`⚠️ [Retry ${i}/${retries}] ${e.code||e.message} — ${delay}ms`);
+            const delay = baseDelay * Math.pow(2, i - 1);
+            console.warn(`⚠️ [Retry ${i}/${retries}] ${e.code || e.message} — ${delay}ms`);
             await new Promise(r => setTimeout(r, delay));
         }
     }
-    throw new TelegramApiError(`Telegram API ${retries} ကြိမ် retry လည်း မရပါ: ${lastError?.message}`);
+    throw new Error(`Telegram API ${retries} ကြိမ် retry လည်း မရပါ: ${lastError?.message}`);
 }
 
 async function isJoined(ctx) {
@@ -287,7 +273,7 @@ async function isJoined(ctx) {
     if (cached && Date.now() < cached.expiresAt) return cached.joined;
     for (const ch of CHANNELS) {
         const member = await withRetry(() => ctx.telegram.getChatMember(ch, userId));
-        if (['left','kicked'].includes(member.status)) return false;
+        if (['left', 'kicked'].includes(member.status)) return false;
     }
     joinCache.set(userId, { joined: true, expiresAt: Date.now() + CACHE_TTL_MS });
     return true;
@@ -297,14 +283,18 @@ const isAdmin = ctx => String(ctx.from.id) === ADMIN_ID;
 
 bot.catch((err, ctx) => console.error(`⚠️ Bot Error (${ctx.updateType}):`, err.message));
 
-// ── Keyboards ────────────────────────────────────────────────────
+// ── Keyboards ──────────────────────────────────────────────────
 const mainMenu = Markup.keyboard([
     ['💰 ငွေလက်ကျန်', '🎮 Mini App ဖွင့်မည်'],
     ['👥 Referral',   '👤 ကျွန်တော့်အကောင့်'],
     ['💸 ငွေထုတ်မည်', '💳 Wallet သတ်မှတ်မည်'],
 ]).resize();
 
-// ── /start ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//   COMMANDS — အားလုံး bot.on('message') ရဲ့ အပေါ်မှာ ရှိရမည်
+// ═══════════════════════════════════════════════════════════════
+
+// ── /start ────────────────────────────────────────────────────
 bot.start(async ctx => {
     try {
         const tgUser = ctx.from;
@@ -315,8 +305,6 @@ bot.start(async ctx => {
                 tgId:     tgUser.id,
                 username: tgUser.username || String(tgUser.id),
             });
-
-            // Referral handling
             const args = ctx.message.text.split(' ');
             if (args[1]) {
                 const refId = parseInt(args[1]);
@@ -346,7 +334,6 @@ bot.start(async ctx => {
             );
         }
 
-        const miniAppUrl = process.env.MINI_APP_URL || 'https://your-app.vercel.app';
         await ctx.reply(
             `🎉 မင်္ဂလာပါ ${tgUser.first_name || 'ခင်ဗျာ'}!\n\n` +
             `💰 လက်ကျန်ငွေ: ${user.balance.toLocaleString()} MMK\n\n` +
@@ -355,122 +342,82 @@ bot.start(async ctx => {
                 reply_markup: {
                     ...mainMenu.reply_markup,
                     inline_keyboard: [[
-                        { text: '🎮 Mini App ဖွင့်မည်', web_app: { url: miniAppUrl } }
+                        { text: '🎮 Mini App ဖွင့်မည်', web_app: { url: MINI_APP_URL } }
                     ]]
                 }
             }
         );
     } catch (e) {
         console.error('❌ /start:', e);
-        ctx.reply('⚠️ Error ဖြစ်သွားပါသည်။ ပြန်ကြိုးစားပါ။').catch(()=>{});
+        ctx.reply('⚠️ Error ဖြစ်သွားပါသည်။ ပြန်ကြိုးစားပါ။').catch(() => {});
     }
 });
 
-bot.action('check_join', async ctx => {
-    try {
-        const joined = await isJoined(ctx);
-        if (joined) {
-            await ctx.answerCbQuery('✅ Verified!');
-            await ctx.deleteMessage().catch(()=>{});
-            await ctx.reply('🎉 ကြိုဆိုပါတယ်! Main Menu ကို ဖွင့်ပါ', mainMenu);
-        } else {
-            await ctx.answerCbQuery('❌ Channel များကို Join မလုပ်ရသေးပါ');
-        }
-    } catch (e) {
-        ctx.answerCbQuery('❌ Error').catch(()=>{});
-    }
-});
-
-// ── Balance ───────────────────────────────────────────────────────
-bot.hears('💰 ငွေလက်ကျန်', async ctx => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        ctx.reply(`💰 လက်ကျန်ငွေ: ${user.balance.toLocaleString()} MMK`);
-    } catch (e) { console.error('❌ balance:', e); }
-});
-
-// ── Mini App button ───────────────────────────────────────────────
-bot.hears('🎮 Mini App ဖွင့်မည်', async ctx => {
-    const miniAppUrl = process.env.MINI_APP_URL || 'https://your-app.vercel.app';
-    ctx.reply('Mini App ကို ဖွင့်ပါ 👇', Markup.inlineKeyboard([
-        [{ text: '🎮 Mini App ဖွင့်မည်', web_app: { url: miniAppUrl } }]
-    ]));
-});
-
-// ── Profile ───────────────────────────────────────────────────────
-bot.hears('👤 ကျွန်တော့်အကောင့်', async ctx => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        const lastSpinStr = user.lastSpin ? new Date(user.lastSpin).toLocaleDateString('my-MM') : 'မလှည့်ရသေးပါ';
-        ctx.reply(
-            `👤 **ကျွန်တော့်အကောင့်**\n\n` +
-            `🆔 ID: ${user.tgId}\n` +
-            `💰 Balance: ${user.balance.toLocaleString()} MMK\n` +
-            `👥 Referral: ${user.referralCount} ယောက်\n` +
-            `🎰 Last Spin: ${lastSpinStr}\n` +
-            `💳 Wallet: ${user.wallet}`,
-            { parse_mode: 'Markdown' }
-        );
-    } catch (e) { console.error('❌ profile:', e); }
-});
-
-// ── Referral ──────────────────────────────────────────────────────
-bot.hears('👥 Referral', async ctx => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user) return;
-        const botUsername = (await bot.telegram.getMe()).username;
-        const link = `https://t.me/${botUsername}?start=${ctx.from.id}`;
-        ctx.reply(
-            `👥 **Referral Link**\n\n` +
-            `သူငယ်ချင်းတစ်ယောက် Join လုပ်တိုင်း **+2,000 MMK** ရပါမည်!\n\n` +
-            `🔗 ${link}\n\n` +
-            `Referral ဦးရေ: ${user.referralCount} ယောက်`,
-            { parse_mode: 'Markdown' }
-        );
-    } catch (e) { console.error('❌ referral:', e); }
-});
-
-// ── Wallet ────────────────────────────────────────────────────────
-bot.hears('💳 Wallet သတ်မှတ်မည်', async ctx => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'wait_wallet' } });
-        ctx.reply('💳 Kpay/Wave ဖုန်းနံပါတ် သို့မဟုတ် Account ကို ရိုက်ထည့်ပေးပါ\n\n❌ မလုပ်လိုပါက /cancel နှိပ်ပါ');
-    } catch (e) { console.error('❌ wallet:', e); }
-});
-
-// ── Withdraw ──────────────────────────────────────────────────────
-bot.hears('💸 ငွေထုတ်မည်', async ctx => {
-    try {
-        const user = await User.findOne({ tgId: ctx.from.id });
-        if (!user || user.isBanned) return;
-        if (user.balance < 100000) {
-            return ctx.reply(`❌ အနည်းဆုံး 100,000 MMK ပြည့်မှ ထုတ်ရပါမည်\nလက်ကျန်: ${user.balance.toLocaleString()} MMK`);
-        }
-        await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'withdraw_phone', tempData: {} } });
-        ctx.reply('📞 Kpay/Wave ဖုန်းနံပါတ် ထည့်ပေးပါ 👇\n\n❌ ပြန်ထွက်လိုပါက /cancel နှိပ်ပါ');
-    } catch (e) { console.error('❌ withdraw_start:', e); }
-});
-
-// ── /cancel ───────────────────────────────────────────────────────
+// ── /cancel ───────────────────────────────────────────────────
 bot.command('cancel', async ctx => {
     await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } });
     ctx.reply('✅ ပြန်ထွက်လိုက်ပါပြီ', mainMenu);
 });
 
-// ── Admin: /users ─────────────────────────────────────────────────
-bot.command('users', async ctx => {
+// ── /admin ────────────────────────────────────────────────────
+bot.command('admin', async ctx => {
     if (!isAdmin(ctx)) return;
-    const count = await User.countDocuments();
-    const banned = await User.countDocuments({ isBanned: true });
-    ctx.reply(`📊 **User Statistics**\n\nTotal: ${count}\nBanned: ${banned}\nActive: ${count - banned}`, { parse_mode: 'Markdown' });
+    const msg =
+`🛠 *Admin Panel — သုံးနည်းများ*
+
+━━━━━━━━━━━━━━━━━━━
+👥 *User Management*
+━━━━━━━━━━━━━━━━━━━
+📊 /users
+   └ User စာရင်း ကြည့်မည်
+
+💰 /addbalance \`<userId>\` \`<amount>\`
+   └ ဥပမာ: /addbalance 123456 5000
+
+🚫 /ban \`<userId>\`
+   └ ဥပမာ: /ban 123456
+
+✅ /unban \`<userId>\`
+   └ ဥပမာ: /unban 123456
+
+📨 /broadcast \`<message>\`
+   └ ဥပမာ: /broadcast မင်္ဂလာပါ!
+
+━━━━━━━━━━━━━━━━━━━
+📋 *Task ရမည့်ငွေ ပြောင်း*
+━━━━━━━━━━━━━━━━━━━
+/settask1 \`<amount>\`  — Task 1
+/settask2 \`<amount>\`  — Task 2
+/settask3 \`<amount>\`  — Task 3
+/settask4 \`<amount>\`  — Task 4
+   └ ဥပမာ: /settask1 300
+
+━━━━━━━━━━━━━━━━━━━
+📢 *VPN Note Control*
+━━━━━━━━━━━━━━━━━━━
+/open  — Website မှာ VPN note ပြမည်
+/close — Website မှာ VPN note ဖျောက်မည်
+
+━━━━━━━━━━━━━━━━━━━
+💸 *Withdrawals*
+━━━━━━━━━━━━━━━━━━━
+/withdrawals — Pending ငွေထုတ်မှု ကြည့်`;
+
+    ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-// ── Admin: /addbalance ────────────────────────────────────────────
+// ── /users ────────────────────────────────────────────────────
+bot.command('users', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const count  = await User.countDocuments();
+    const banned = await User.countDocuments({ isBanned: true });
+    ctx.reply(
+        `📊 *User Statistics*\n\nTotal: ${count}\nBanned: ${banned}\nActive: ${count - banned}`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+// ── /addbalance ───────────────────────────────────────────────
 bot.command('addbalance', async ctx => {
     if (!isAdmin(ctx)) return;
     try {
@@ -484,11 +431,11 @@ bot.command('addbalance', async ctx => {
         );
         if (!updated) return ctx.reply('❌ User မတွေ့ပါ');
         ctx.reply(`✅ Balance ထည့်ပြီး\nUser: ${targetId}\nAmount: ${Number(amount).toLocaleString()} MMK\nNew Balance: ${updated.balance.toLocaleString()} MMK`);
-        try { await bot.telegram.sendMessage(Number(targetId), `💰 Admin မှ ${Number(amount).toLocaleString()} MMK ထည့်ပေးလိုက်ပါပြီ!\nလက်ကျန်: ${updated.balance.toLocaleString()} MMK`); } catch(e){}
-    } catch(e) { ctx.reply('❌ Error: ' + e.message); }
+        try { await bot.telegram.sendMessage(Number(targetId), `💰 Admin မှ ${Number(amount).toLocaleString()} MMK ထည့်ပေးလိုက်ပါပြီ!\nလက်ကျန်: ${updated.balance.toLocaleString()} MMK`); } catch (e) {}
+    } catch (e) { ctx.reply('❌ Error: ' + e.message); }
 });
 
-// ── Admin: /ban /unban ────────────────────────────────────────────
+// ── /ban ──────────────────────────────────────────────────────
 bot.command('ban', async ctx => {
     if (!isAdmin(ctx)) return;
     const id = parseInt(ctx.message.text.split(' ')[1]);
@@ -496,6 +443,8 @@ bot.command('ban', async ctx => {
     await User.updateOne({ tgId: id }, { $set: { isBanned: true } });
     ctx.reply(`✅ User ${id} banned`);
 });
+
+// ── /unban ────────────────────────────────────────────────────
 bot.command('unban', async ctx => {
     if (!isAdmin(ctx)) return;
     const id = parseInt(ctx.message.text.split(' ')[1]);
@@ -504,35 +453,108 @@ bot.command('unban', async ctx => {
     ctx.reply(`✅ User ${id} unbanned`);
 });
 
-// ── Admin: /broadcast ─────────────────────────────────────────────
+// ── /broadcast ────────────────────────────────────────────────
 bot.command('broadcast', async ctx => {
     if (!isAdmin(ctx)) return;
     const msg = ctx.message.text.split('/broadcast ')[1];
     if (!msg) return ctx.reply('Usage: /broadcast <message>');
     const users = await User.find({ isBanned: false });
     await ctx.reply(`📨 Sending to ${users.length} users...`);
-    let ok=0, fail=0;
+    let ok = 0, fail = 0;
     for (const u of users) {
-        try { await bot.telegram.sendMessage(u.tgId, msg); ok++; await new Promise(r=>setTimeout(r,50)); }
-        catch(e) { fail++; }
+        try { await bot.telegram.sendMessage(u.tgId, msg); ok++; await new Promise(r => setTimeout(r, 50)); }
+        catch (e) { fail++; }
     }
     ctx.reply(`✅ Done\n✅ Success: ${ok}\n❌ Failed: ${fail}`);
 });
 
-// ── Admin: /withdrawals ───────────────────────────────────────────
+// ── /withdrawals ──────────────────────────────────────────────
 bot.command('withdrawals', async ctx => {
     if (!isAdmin(ctx)) return;
     const pending = await Withdrawal.find({ status: 'pending' }).sort({ createdAt: -1 });
-    if (!pending.length) return ctx.reply('✅ ဆိုင်းငံ့ မရှိပါ');
-    let msg = `⏳ **Pending Withdrawals** (${pending.length})\n\n`;
-    pending.forEach((w,i) => {
-        msg += `${i+1}. ID:${w.userId} | ${w.name} | ${w.amount.toLocaleString()} ကျပ`+
-               ` | ${new Date(w.createdAt).toLocaleString()}\n`;
+    if (!pending.length) return ctx.reply('✅ Pending မရှိပါ');
+    let msg = `⏳ *Pending Withdrawals* (${pending.length})\n\n`;
+    pending.forEach((w, i) => {
+        msg += `${i + 1}. ID:${w.userId} | ${w.name} | ${w.amount.toLocaleString()} ကျပ် | ${new Date(w.createdAt).toLocaleString()}\n`;
     });
     ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-// ── Approve / Reject ──────────────────────────────────────────────
+// ── /open ─────────────────────────────────────────────────────
+bot.command('open', async ctx => {
+    if (!isAdmin(ctx)) return;
+    await setCfg('vpn_note_open', true);
+    ctx.reply('✅ VPN Note ဖွင့်လိုက်ပါပြီ — Website မှာ ပေါ်နေမည်');
+});
+
+// ── /close ────────────────────────────────────────────────────
+bot.command('close', async ctx => {
+    if (!isAdmin(ctx)) return;
+    await setCfg('vpn_note_open', false);
+    ctx.reply('✅ VPN Note ပိတ်လိုက်ပါပြီ — Website မှာ ပျောက်သွားမည်');
+});
+
+// ── /settask1 ─────────────────────────────────────────────────
+bot.command('settask1', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask1 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task1_reward', amt);
+    ctx.reply(`✅ Task 1 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+// ── /settask2 ─────────────────────────────────────────────────
+bot.command('settask2', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask2 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task2_reward', amt);
+    ctx.reply(`✅ Task 2 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+// ── /settask3 ─────────────────────────────────────────────────
+bot.command('settask3', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask3 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task3_reward', amt);
+    ctx.reply(`✅ Task 3 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+// ── /settask4 ─────────────────────────────────────────────────
+bot.command('settask4', async ctx => {
+    if (!isAdmin(ctx)) return;
+    const parts = ctx.message.text.split(' ');
+    if (parts.length < 2) return ctx.reply('Usage: /settask4 <amount>');
+    const amt = parseInt(parts[1]);
+    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
+    await setCfg('task4_reward', amt);
+    ctx.reply(`✅ Task 4 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
+});
+
+// ── Inline button: check_join ──────────────────────────────────
+bot.action('check_join', async ctx => {
+    try {
+        const joined = await isJoined(ctx);
+        if (joined) {
+            await ctx.answerCbQuery('✅ Verified!');
+            await ctx.deleteMessage().catch(() => {});
+            await ctx.reply('🎉 ကြိုဆိုပါတယ်! Main Menu ကို ဖွင့်ပါ', mainMenu);
+        } else {
+            await ctx.answerCbQuery('❌ Channel များကို Join မလုပ်ရသေးပါ');
+        }
+    } catch (e) {
+        ctx.answerCbQuery('❌ Error').catch(() => {});
+    }
+});
+
+// ── Inline button: approve/reject withdrawal ───────────────────
 bot.action(/^approve_withdraw_(.+)$/, async ctx => {
     if (!isAdmin(ctx)) return;
     try {
@@ -541,10 +563,13 @@ bot.action(/^approve_withdraw_(.+)$/, async ctx => {
         if (w.status !== 'pending') return ctx.answerCbQuery('✅ ပြီးသားပါ');
         w.status = 'approved'; w.reviewedAt = new Date(); w.reviewedBy = ctx.from.id;
         await w.save();
-        try { await bot.telegram.sendMessage(w.userId, `✅ ငွေထုတ်မှု အတည်ပြုပြီး!\n${w.amount.toLocaleString()} MMK လွှဲပေးလိုက်ပါပြီ 🎉`); } catch(e){}
-        await ctx.editMessageCaption(`✅ Approved\nUser: ${w.userId} | ${w.amount.toLocaleString()} ကျပ်`, { reply_markup: { inline_keyboard: [] } }).catch(()=>{});
+        try { await bot.telegram.sendMessage(w.userId, `✅ ငွေထုတ်မှု အတည်ပြုပြီး!\n${w.amount.toLocaleString()} MMK လွှဲပေးလိုက်ပါပြီ 🎉`); } catch (e) {}
+        await ctx.editMessageCaption(
+            `✅ Approved\nUser: ${w.userId} | ${w.amount.toLocaleString()} ကျပ်`,
+            { reply_markup: { inline_keyboard: [] } }
+        ).catch(() => {});
         ctx.answerCbQuery('✅ Approved!');
-    } catch(e) { ctx.answerCbQuery('❌ Error').catch(()=>{}); }
+    } catch (e) { ctx.answerCbQuery('❌ Error').catch(() => {}); }
 });
 
 bot.action(/^reject_withdraw_(.+)$/, async ctx => {
@@ -555,25 +580,98 @@ bot.action(/^reject_withdraw_(.+)$/, async ctx => {
     ctx.answerCbQuery();
 });
 
-// ─── back_to_menu ─────────────────────────────────────────────────
 bot.action('back_to_menu', async ctx => {
-    try { await ctx.deleteMessage(); } catch(e){}
+    try { await ctx.deleteMessage(); } catch (e) {}
     ctx.reply('🏡 Main Menu', mainMenu);
 });
 
+// ── Keyboard buttons ───────────────────────────────────────────
+bot.hears('💰 ငွေလက်ကျန်', async ctx => {
+    try {
+        const user = await User.findOne({ tgId: ctx.from.id });
+        if (!user || user.isBanned) return;
+        ctx.reply(`💰 လက်ကျန်ငွေ: ${user.balance.toLocaleString()} MMK`);
+    } catch (e) { console.error('❌ balance:', e); }
+});
+
+bot.hears('🎮 Mini App ဖွင့်မည်', async ctx => {
+    ctx.reply('Mini App ကို ဖွင့်ပါ 👇', Markup.inlineKeyboard([
+        [{ text: '🎮 Mini App ဖွင့်မည်', web_app: { url: MINI_APP_URL } }]
+    ]));
+});
+
+bot.hears('👤 ကျွန်တော့်အကောင့်', async ctx => {
+    try {
+        const user = await User.findOne({ tgId: ctx.from.id });
+        if (!user || user.isBanned) return;
+        const lastSpinStr = user.lastSpin
+            ? new Date(user.lastSpin).toLocaleDateString('my-MM')
+            : 'မလှည့်ရသေးပါ';
+        ctx.reply(
+            `👤 *ကျွန်တော့်အကောင့်*\n\n` +
+            `🆔 ID: ${user.tgId}\n` +
+            `💰 Balance: ${user.balance.toLocaleString()} MMK\n` +
+            `👥 Referral: ${user.referralCount} ယောက်\n` +
+            `🎰 Last Spin: ${lastSpinStr}\n` +
+            `💳 Wallet: ${user.wallet}`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) { console.error('❌ profile:', e); }
+});
+
+bot.hears('👥 Referral', async ctx => {
+    try {
+        const user = await User.findOne({ tgId: ctx.from.id });
+        if (!user) return;
+        const botUsername = (await bot.telegram.getMe()).username;
+        const link = `https://t.me/${botUsername}?start=${ctx.from.id}`;
+        ctx.reply(
+            `👥 *Referral Link*\n\n` +
+            `သူငယ်ချင်းတစ်ယောက် Join လုပ်တိုင်း *+2,000 MMK* ရပါမည်!\n\n` +
+            `🔗 ${link}\n\n` +
+            `Referral ဦးရေ: ${user.referralCount} ယောက်`,
+            { parse_mode: 'Markdown' }
+        );
+    } catch (e) { console.error('❌ referral:', e); }
+});
+
+bot.hears('💳 Wallet သတ်မှတ်မည်', async ctx => {
+    try {
+        const user = await User.findOne({ tgId: ctx.from.id });
+        if (!user || user.isBanned) return;
+        await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'wait_wallet' } });
+        ctx.reply('💳 Kpay/Wave ဖုန်းနံပါတ် သို့မဟုတ် Account ကို ရိုက်ထည့်ပေးပါ\n\n❌ မလုပ်လိုပါက /cancel နှိပ်ပါ');
+    } catch (e) { console.error('❌ wallet:', e); }
+});
+
+bot.hears('💸 ငွေထုတ်မည်', async ctx => {
+    try {
+        const user = await User.findOne({ tgId: ctx.from.id });
+        if (!user || user.isBanned) return;
+        if (user.balance < 100000) {
+            return ctx.reply(`❌ အနည်းဆုံး 100,000 MMK ပြည့်မှ ထုတ်ရပါမည်\nလက်ကျန်: ${user.balance.toLocaleString()} MMK`);
+        }
+        await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'withdraw_phone', tempData: {} } });
+        ctx.reply('📞 Kpay/Wave ဖုန်းနံပါတ် ထည့်ပေးပါ 👇\n\n❌ ပြန်ထွက်လိုပါက /cancel နှိပ်ပါ');
+    } catch (e) { console.error('❌ withdraw_start:', e); }
+});
+
 // ═══════════════════════════════════════════════════════════════
-//   GLOBAL MESSAGE HANDLER
+//   GLOBAL MESSAGE HANDLER — အောက်ဆုံးမှာသာ ရှိရမည်
 // ═══════════════════════════════════════════════════════════════
 if (!global.pendingRejects) global.pendingRejects = new Map();
 
 bot.on('message', async ctx => {
     try {
-        User.updateOne({ tgId: ctx.from.id }, { $set: { lastActive: new Date() } }).catch(()=>{});
+        // commands တွေကို ဒီ handler မထိစေဖို့ filter လုပ်သည်
+        if (ctx.message.text && ctx.message.text.startsWith('/')) return;
+
+        User.updateOne({ tgId: ctx.from.id }, { $set: { lastActive: new Date() } }).catch(() => {});
 
         const user = await User.findOne({ tgId: ctx.from.id });
         if (!user || user.isBanned) return;
 
-        // ── Admin: reject reason ──────────────────────────────────
+        // ── Admin: reject reason ───────────────────────────────
         if (isAdmin(ctx) && global.pendingRejects.has(ctx.from.id)) {
             const withdrawId = global.pendingRejects.get(ctx.from.id);
             const reason = ctx.message.text;
@@ -585,18 +683,18 @@ bot.on('message', async ctx => {
             if (w.amountDeducted) await User.updateOne({ tgId: w.userId }, { $inc: { balance: w.amount } });
             w.status = 'rejected'; w.reviewedAt = new Date(); w.reviewedBy = ctx.from.id; w.rejectReason = reason;
             await w.save();
-            try { await bot.telegram.sendMessage(w.userId, `❌ ငွေထုတ်မှု ငြင်းပယ်\nအကြောင်း: ${reason}\n💰 ${w.amount.toLocaleString()} MMK ပြန်ထည့်ပေးပြီ`); } catch(e){}
+            try { await bot.telegram.sendMessage(w.userId, `❌ ငွေထုတ်မှု ငြင်းပယ်\nအကြောင်း: ${reason}\n💰 ${w.amount.toLocaleString()} MMK ပြန်ထည့်ပေးပြီ`); } catch (e) {}
             return ctx.reply(`✅ Rejected: ${w.userId} | ${reason}`);
         }
 
-        // ── Wallet setting ────────────────────────────────────────
+        // ── Wallet setting ─────────────────────────────────────
         if (user.state === 'wait_wallet') {
             if (!ctx.message.text) return ctx.reply('⚠️ စာသားဖြင့် ထည့်ပါ');
             await User.updateOne({ tgId: ctx.from.id }, { $set: { wallet: ctx.message.text, state: 'none' } });
             return ctx.reply(`✅ Wallet: ${ctx.message.text}`, mainMenu);
         }
 
-        // ── Withdrawal flow ───────────────────────────────────────
+        // ── Withdrawal flow ────────────────────────────────────
         if (user.state === 'withdraw_phone') {
             if (!ctx.message.text || !/^\d+$/.test(ctx.message.text))
                 return ctx.reply('⚠️ နံပါတ်သာ ထည့်ပါ\n\n/cancel ဖြင့် ပြန်ထွက်နိုင်သည်');
@@ -625,12 +723,16 @@ bot.on('message', async ctx => {
             if (!ctx.message.photo) return ctx.reply('⚠️ ဓာတ်ပုံ ပို့ပေးပါ\n\n/cancel ဖြင့် ပြန်ထွက်နိုင်သည်');
             const photo = ctx.message.photo.at(-1);
             const d = user.tempData;
-            const w = new Withdrawal({ userId: user.tgId, username: user.username, phone: d.phone, name: d.name, amount: d.amt, nrcFront: d.front, nrcBack: photo.file_id });
+            const w = new Withdrawal({
+                userId: user.tgId, username: user.username,
+                phone: d.phone, name: d.name, amount: d.amt,
+                nrcFront: d.front, nrcBack: photo.file_id
+            });
             await w.save();
             await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'waiting_verification_screenshot', tempData: { withdrawalId: w._id } } });
             await ctx.reply(
                 `✅ မှတ်ပုံတင် လက်ခံပြီ!\n\n` +
-                `Verification အတွက် Kpay - 09783646736 (Yee Moon Naing) ထံ **3,000 ကျပ်** လွှဲပြီး\nပြေစာ (Screenshot) ကို ဒီမှာ ပို့ပေးပါ 💸\n\n/cancel ဖြင့် ပြန်ထွက်နိုင်သည်`,
+                `Verification အတွက် Kpay - 09783646736 (Yee Moon Naing) ထံ *3,000 ကျပ်* လွှဲပြီး\nပြေစာ (Screenshot) ကို ဒီမှာ ပို့ပေးပါ 💸\n\n/cancel ဖြင့် ပြန်ထွက်နိုင်သည်`,
                 { parse_mode: 'Markdown' }
             );
             try {
@@ -639,19 +741,29 @@ bot.on('message', async ctx => {
                     parse_mode: 'Markdown'
                 });
                 await bot.telegram.sendPhoto(LOG_GROUP_ID, photo.file_id, { caption: 'NRC Back' });
-            } catch(e) {}
+            } catch (e) {}
             return;
         }
         if (user.state === 'waiting_verification_screenshot') {
             if (!ctx.message.photo) return ctx.reply('⚠️ Screenshot ကို ဓာတ်ပုံဖြင့် ပို့ပါ\n\n/cancel ဖြင့် ပြန်ထွက်နိုင်သည်');
             const photo = ctx.message.photo.at(-1);
             const wId = user.tempData?.withdrawalId;
-            if (!wId) { await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } }); return ctx.reply('❌ Error ဖြစ်ပါသည်'); }
+            if (!wId) {
+                await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } });
+                return ctx.reply('❌ Error ဖြစ်ပါသည်');
+            }
             const w = await Withdrawal.findById(wId);
-            if (!w) { await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } }); return ctx.reply('❌ မတွေ့ပါ'); }
-            if (user.balance < w.amount) { await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } }); return ctx.reply('❌ Balance မလုံ'); }
+            if (!w) {
+                await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } });
+                return ctx.reply('❌ မတွေ့ပါ');
+            }
+            if (user.balance < w.amount) {
+                await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'none', tempData: {} } });
+                return ctx.reply('❌ Balance မလုံ');
+            }
             await User.updateOne({ tgId: ctx.from.id }, { $inc: { balance: -w.amount }, $set: { state: 'none', tempData: {} } });
-            w.verificationScreenshot = photo.file_id; w.amountDeducted = true; await w.save();
+            w.verificationScreenshot = photo.file_id; w.amountDeducted = true;
+            await w.save();
             await ctx.reply('✅ Screenshot လက်ခံပြီ! Admin စစ်ဆေးနေပါသည်...\n💰 ငွေ နုတ်ပြီးပါပြီ');
             try {
                 await bot.telegram.sendPhoto(LOG_GROUP_ID, photo.file_id, {
@@ -662,141 +774,27 @@ bot.on('message', async ctx => {
                         Markup.button.callback('❌ Reject',  `reject_withdraw_${w._id}`)
                     ]])
                 });
-            } catch(e) {}
+            } catch (e) {}
             return;
         }
 
-        // ── Forward unhandled messages to log ─────────────────────
+        // ── Forward unhandled messages to log ──────────────────
         if (user.state === 'none' && ctx.message.text) {
             try {
                 await bot.telegram.sendMessage(LOG_GROUP_ID,
-                    `📨 User Message\nID: ${user.tgId} | @${user.username||'N/A'}\n${ctx.message.text}`,
+                    `📨 User Message\nID: ${user.tgId} | @${user.username || 'N/A'}\n${ctx.message.text}`,
                     { parse_mode: 'Markdown' }
                 );
-            } catch(e) {}
+            } catch (e) {}
         }
-    } catch(e) {
+    } catch (e) {
         console.error('❌ message handler:', e);
     }
 });
 
-// ── Admin: /admin ─────────────────────────────────────────────────
-bot.command('admin', async ctx => {
-    if (!isAdmin(ctx)) return;
-    const msg =
-`🛠 *Admin Panel — သုံးနည်းများ*
-
-━━━━━━━━━━━━━━━━━━━
-👥 *User Management*
-━━━━━━━━━━━━━━━━━━━
-📊 /users
-   └ User စာရင်း ကြည့်မည်
-
-💰 /addbalance \`<userId>\` \`<amount>\`
-   └ ဥပမာ: /addbalance 123456 5000
-   └ User ကို Balance ထည့်
-
-🚫 /ban \`<userId>\`
-   └ ဥပမာ: /ban 123456
-   └ User ကို ပိတ်
-
-✅ /unban \`<userId>\`
-   └ ဥပမာ: /unban 123456
-   └ User ကို ပြန်ဖွင့်
-
-📨 /broadcast \`<message>\`
-   └ ဥပမာ: /broadcast မင်္ဂလာပါ!
-   └ User အားလုံးကို message ပို့
-
-━━━━━━━━━━━━━━━━━━━
-📋 *Task ရမည့်ငွေ ပြောင်း*
-━━━━━━━━━━━━━━━━━━━
-/settask1 \`<amount>\`
-   └ ဥပမာ: /settask1 300
-   └ Task 1 ကြော်ငြာကြည့်ရင် ရမည့်ငွေ
-
-/settask2 \`<amount>\`
-   └ Task 2 ရမည့်ငွေ
-
-/settask3 \`<amount>\`
-   └ Task 3 ရမည့်ငွေ
-
-/settask4 \`<amount>\`
-   └ Task 4 ရမည့်ငွေ
-
-━━━━━━━━━━━━━━━━━━━
-📢 *VPN Note Control*
-━━━━━━━━━━━━━━━━━━━
-/open
-   └ Website မှာ VPN ကြော်ငြာ note ပြမည်
-
-/close
-   └ Website မှာ VPN note ဖျောက်မည်
-
-━━━━━━━━━━━━━━━━━━━
-💸 *Withdrawals*
-━━━━━━━━━━━━━━━━━━━
-/withdrawals
-   └ Pending ငွေထုတ်မှု စာရင်းကြည့်`;
-
-    ctx.reply(msg, { parse_mode: 'Markdown' });
-});
-
-// ── Admin: /open /close ───────────────────────────────────────────
-bot.command('open', async ctx => {
-    if (!isAdmin(ctx)) return;
-    await setCfg('vpn_note_open', true);
-    ctx.reply('✅ VPN Note ဖွင့်လိုက်ပါပြီ — Website မှာ ပေါ်နေမည်');
-});
-
-bot.command('close', async ctx => {
-    if (!isAdmin(ctx)) return;
-    await setCfg('vpn_note_open', false);
-    ctx.reply('✅ VPN Note ပိတ်လိုက်ပါပြီ — Website မှာ ပျောက်သွားမည်');
-});
-
-// ── Admin: /settask1 ~ /settask4 ──────────────────────────────────
-bot.command('settask1', async ctx => {
-    if (!isAdmin(ctx)) return;
-    const parts = ctx.message.text.split(' ');
-    if (parts.length < 2) return ctx.reply('Usage: /settask1 <amount>');
-    const amt = parseInt(parts[1]);
-    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
-    await setCfg('task1_reward', amt);
-    ctx.reply(`✅ Task 1 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
-});
-
-bot.command('settask2', async ctx => {
-    if (!isAdmin(ctx)) return;
-    const parts = ctx.message.text.split(' ');
-    if (parts.length < 2) return ctx.reply('Usage: /settask2 <amount>');
-    const amt = parseInt(parts[1]);
-    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
-    await setCfg('task2_reward', amt);
-    ctx.reply(`✅ Task 2 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
-});
-
-bot.command('settask3', async ctx => {
-    if (!isAdmin(ctx)) return;
-    const parts = ctx.message.text.split(' ');
-    if (parts.length < 2) return ctx.reply('Usage: /settask3 <amount>');
-    const amt = parseInt(parts[1]);
-    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
-    await setCfg('task3_reward', amt);
-    ctx.reply(`✅ Task 3 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
-});
-
-bot.command('settask4', async ctx => {
-    if (!isAdmin(ctx)) return;
-    const parts = ctx.message.text.split(' ');
-    if (parts.length < 2) return ctx.reply('Usage: /settask4 <amount>');
-    const amt = parseInt(parts[1]);
-    if (isNaN(amt) || amt < 1) return ctx.reply('❌ ပမာဏ မမှန်ပါ');
-    await setCfg('task4_reward', amt);
-    ctx.reply(`✅ Task 4 ရမည့်ငွေ: *${amt.toLocaleString()} ကျပ်* သို့ ပြောင်းပြီး`, { parse_mode: 'Markdown' });
-});
-
-// ─── Launch ────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//   LAUNCH
+// ═══════════════════════════════════════════════════════════════
 bot.launch().then(() => console.log('🚀 Bot is Live!'));
 process.once('SIGINT',  () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));

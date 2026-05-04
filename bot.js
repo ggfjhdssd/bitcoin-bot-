@@ -92,7 +92,7 @@ app.all('/reward-user', async (req, res) => {
     }
 });
 
-// Balance ပြရန် API (index.html အတွက်)
+// Balance ပြရန် API (index.html အတွက်) - /get-balance (legacy)
 app.post('/get-balance', async (req, res) => {
     try {
         const { userId } = req.body;
@@ -104,6 +104,104 @@ app.post('/get-balance', async (req, res) => {
         res.json({ balance: 0 });
     } catch (error) {
         console.error("❌ /get-balance error:", error);
+        res.status(500).json({ error: 'Internal Error' });
+    }
+});
+
+// /api/get-user — index.html ၏ refreshBalance() အတွက် (user အချက်အလက်အကုန်)
+app.post('/api/get-user', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const user = await User.findOne({ tgId: Number(userId) });
+        if (user) {
+            return res.json({
+                balance: user.balance,
+                username: user.username,
+                wallet: user.wallet,
+                referralCount: user.referralCount,
+                lastSpin: user.lastActive,
+                isBanned: user.isBanned
+            });
+        }
+        // User မတွေ့ → အသစ် create
+        const newUser = await User.findOneAndUpdate(
+            { tgId: Number(userId) },
+            { $setOnInsert: { username: 'User' } },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        return res.json({ balance: newUser.balance, username: newUser.username, wallet: newUser.wallet, referralCount: newUser.referralCount });
+    } catch (error) {
+        console.error("❌ /api/get-user error:", error);
+        res.status(500).json({ error: 'Internal Error' });
+    }
+});
+
+// /api/reward-user — index.html ၏ ad reward အတွက်
+app.post('/api/reward-user', async (req, res) => {
+    try {
+        const { userId, slot } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const updatedUser = await User.findOneAndUpdate(
+            { tgId: Number(userId) },
+            { $inc: { balance: 500 } },
+            { new: true }
+        );
+        if (updatedUser) {
+            try { await bot.telegram.sendMessage(userId, `💰 ကြော်ငြာ (Slot ${slot || ''}) ကြည့်ရှုမှုအတွက် ၅၀၀ ကျပ် လက်ခံရရှိပါတယ်!`); } catch (e) {}
+            return res.json({ success: true, newBalance: updatedUser.balance });
+        }
+        res.status(404).json({ error: 'User not found' });
+    } catch (error) {
+        console.error("❌ /api/reward-user error:", error);
+        res.status(500).json({ error: 'Internal Error' });
+    }
+});
+
+// /api/spin — Lucky Spin အတွက်
+app.post('/api/spin', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const prizes = [100, 50, 200, 300, 500, 50, 100, 200];
+        const idx = Math.floor(Math.random() * prizes.length);
+        const amount = prizes[idx];
+        const updatedUser = await User.findOneAndUpdate(
+            { tgId: Number(userId) },
+            { $inc: { balance: amount }, $set: { lastActive: new Date() } },
+            { new: true }
+        );
+        if (!updatedUser) return res.status(404).json({ error: 'User not found' });
+        try { await bot.telegram.sendMessage(userId, `🎰 Lucky Spin မှ ${amount} ကျပ် ရရှိပါတယ်! လက်ကျန်: ${updatedUser.balance.toLocaleString()} ကျပ်`); } catch (e) {}
+        return res.json({ success: true, amount, newBalance: updatedUser.balance, prizeIndex: idx });
+    } catch (error) {
+        console.error("❌ /api/spin error:", error);
+        res.status(500).json({ error: 'Internal Error' });
+    }
+});
+
+// /api/task-config — Task slot config အတွက်
+app.get('/api/task-config', async (req, res) => {
+    res.json({
+        slots: [
+            { id: 1, title: 'ကြော်ငြာ ၁', reward: 500, blockId: 'int-29385' },
+            { id: 2, title: 'ကြော်ငြာ ၂', reward: 500, blockId: 'int-29385' },
+            { id: 3, title: 'ကြော်ငြာ ၃', reward: 500, blockId: 'int-29385' },
+            { id: 4, title: 'ကြော်ငြာ ၄', reward: 500, blockId: 'int-29385' },
+        ]
+    });
+});
+
+// /api/withdraw-deep-link — Website က withdraw button နှိပ်ရင် bot deep link ပေး
+app.post('/api/withdraw-deep-link', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        if (!userId) return res.status(400).json({ error: 'User ID required' });
+        const botMe = await bot.telegram.getMe();
+        const deepLink = `https://t.me/${botMe.username}?start=withdraw_${userId}`;
+        return res.json({ deepLink });
+    } catch (error) {
+        console.error("❌ /api/withdraw-deep-link error:", error);
         res.status(500).json({ error: 'Internal Error' });
     }
 });
@@ -210,6 +308,21 @@ const mainMenu = Markup.keyboard([
 bot.start(async (ctx) => {
     try {
         const payload = ctx.payload;
+        // Website မှ ငွေထုတ်ခလုတ် နှိပ်လာသောအခါ → withdraw flow တန်းစပါ
+        if (payload && payload.startsWith("withdraw_")) {
+            const user = await User.findOne({ tgId: ctx.from.id });
+            if (!user) return ctx.reply("⚠️ User မတွေ့ပါ။ Bot ကို /start နှိပ်ပြီး စဉ်ဆက်ပါ။");
+            if (user.isBanned) return ctx.reply("🚫 သင်သည် ပိတ်ပင်ခံထားရပါသည်။");
+            if (user.balance < 100000) {
+                return ctx.reply("⚠ ငွေထုတ်ယူရန် အနည်းဆုံး 100,000 ကျပ် ရှိရပါမည်။\n\nလက်ကျန်: " + user.balance.toLocaleString() + " ကျပ်", mainMenu);
+            }
+            let joined = false;
+            try { joined = await isJoined(ctx); } catch (e) { joined = false; }
+            if (!joined) return ctx.reply("⚠️ Channel ၂ ခုလုံးကို Join ထားမှ ငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်။", mainMenu);
+            await User.updateOne({ tgId: ctx.from.id }, { $set: { state: "withdraw_phone" } });
+            return ctx.reply("💸 ငွေထုတ်ယူမှု စတင်ပါပြီ!\n\nလက်ကျန်: " + user.balance.toLocaleString() + " ကျပ်\n\n📱 ငွေထုတ်ယူမည့် Kpay/Wave ဖုန်းနံပါတ်ကို ပို့ပေးပါ (ဂဏန်းသီးသန့်) 👇\n\n❌ ပြန်ထွက်လိုပါက /cancel နှိပ်ပါ");
+        }
+
         const refId = payload ? parseInt(payload) : null;
         const isValidRef = refId && refId !== ctx.from.id;
 

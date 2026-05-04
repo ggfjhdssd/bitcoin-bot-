@@ -956,13 +956,34 @@ function animateSpin(prizeIndex, amount) {
 /* ════════════════════════════════════════════
    WITHDRAW
 ════════════════════════════════════════════ */
-function handleWithdraw() {
+async function handleWithdraw() {
   if (currentBalance < MIN_WITHDRAW) {
     WebApp.showAlert(`❌ အနည်းဆုံး ${MIN_WITHDRAW.toLocaleString()} MMK ပြည့်မှ ထုတ်လို့ရပါသည်။\n\nလက်ကျန်: ${currentBalance.toLocaleString()} MMK`);
     return;
   }
-  WebApp.sendData(JSON.stringify({ action: 'withdraw', userId, balance: currentBalance }));
-  WebApp.close();
+  if (!userId) {
+    WebApp.showAlert('❌ Telegram User ID မတွေ့ပါ။ Bot ကနေ ဖွင့်ပေးပါ။');
+    return;
+  }
+  try {
+    // Bot deep link ကို backend ကနေ ယူပြီး bot ထဲသွားပါ
+    const res = await fetch(API_BASE + '/api/withdraw-deep-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    const data = await res.json();
+    if (data.deepLink) {
+      // Mini App ပိတ်ပြီး Bot ထဲ withdraw flow ထဲသွားသည်
+      WebApp.openTelegramLink(data.deepLink);
+    } else {
+      WebApp.showAlert('❌ ချိတ်ဆက်မရပါ။ ထပ်ကြိုးစားပါ။');
+    }
+  } catch (e) {
+    // Fallback: bot ကို တန်းသွားပါ
+    const botUsername = 'bitcoinminingmyanmar_bot';
+    WebApp.openTelegramLink(`https://t.me/${botUsername}?start=withdraw_${userId}`);
+  }
 }
 
 /* ════════════════════════════════════════════

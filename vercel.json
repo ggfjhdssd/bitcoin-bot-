@@ -2,29 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "src": "bot.js",
-      "use": "@vercel/node"
+      "src": "index.html",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "bot.js"
-    },
-    {
-      "src": "/reward-user",
-      "dest": "bot.js"
-    },
-    {
-      "src": "/get-balance",
-      "dest": "bot.js"
-    },
-    {
       "src": "/(.*)",
-      "dest": "bot.js"
+      "dest": "/index.html"
     }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  }
+  ]
 }

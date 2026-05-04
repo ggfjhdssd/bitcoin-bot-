@@ -624,7 +624,8 @@ function setLoading(v) {
 /* ════════════════════════════════════════════
    API HELPERS
 ════════════════════════════════════════════ */
-const API_BASE = ''; // same origin (Express serves both)
+// 👇 Render backend URL ကို ဒီနေရာမှာ ထည့်ပါ
+const API_BASE = 'https://YOUR-RENDER-APP.onrender.com';
 
 async function apiFetch(path, body) {
   const res = await fetch(API_BASE + path, {
@@ -711,7 +712,7 @@ let taskRewards = [500, 500, 500, 500];
 
 async function loadTaskConfig() {
   try {
-    const res = await fetch('/api/task-config');
+    const res = await fetch(API_BASE + '/api/task-config');
     const data = await res.json();
     if (data.rewards) {
       taskRewards = data.rewards;

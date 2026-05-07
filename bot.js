@@ -307,7 +307,7 @@ bot.catch((err, ctx) => {
 // --- 7. Keyboards ---
 const mainMenu = Markup.keyboard([
     ['💰 လက်ကျန်ငွေ', '👫 ဖိတ်ခေါ်ရန်'],
-    [Markup.button.webApp('💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်', 'https://kyawngarrapp.vercel.app/')],
+    ['💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်'],
     ['🗂 Wallet', '🎁 Bonus'],
     ['📤 ငွေထုတ်ယူရန်']
 ]).resize();
@@ -445,6 +445,33 @@ bot.action('check_join', async (ctx) => {
 });
 
 // --- 9. Main Menu Buttons ---
+
+// ★ ကြော်ငြာကြည့်ပြီးငွေရှာရန် — VPN notice + Mini App button with userId
+bot.hears('💸 ကြော်ငြာကြည့်ပြီးငွေရှာရန်', async (ctx) => {
+    try {
+        const tgId = ctx.from.id;
+        const user = await User.findOne({ tgId });
+        if (!user) return ctx.reply('⚠️ User မတွေ့ပါ။ /start နှိပ်ပြီး စတင်ပါ။').catch(() => {});
+        if (user.isBanned) return ctx.reply('🚫 သင်သည် ပိတ်ပင်ခံထားရပါသည်။').catch(() => {});
+
+        // Mini App URL — userId ကို uid param အနေနဲ့ ထည့်ပေးသည် (fallback အတွက်)
+        const miniAppUrl = `https://the-netcoinmm.vercel.app/?uid=${tgId}`;
+
+        const msg =
+            `📢 <b>ကြော်ငြာကြည့်ပြီး ငွေပိုရှာဖို့အတွက် သတိပြုရန်</b>\n\n` +
+            `ယခု Task ကို လုပ်ဆောင်ရန်အတွက် <b>Jump Jump VPN</b> (သို့မဟုတ်) တခြား VPN တစ်ခုခုကို အသုံးပြုပြီး <b>USA</b> သို့မဟုတ် <b>UK</b> Location ပြောင်းပေးရန် လိုအပ်ပါသည်။\n\n` +
+            `မြန်မာနိုင်ငံ Location ဖြင့် ကြည့်ပါက ကြော်ငြာတက်မည်မဟုတ်သလို Coins များလည်း ရရှိမည်မဟုတ်ပါ`;
+
+        await ctx.replyWithHTML(msg,
+            Markup.inlineKeyboard([
+                [Markup.button.webApp('📺 ကြော်ငြာကြည့်ရန်', miniAppUrl)]
+            ])
+        ).catch(() => {});
+    } catch (e) {
+        console.error('❌ ad-watch handler error:', e);
+    }
+});
+
 bot.hears('💰 လက်ကျန်ငွေ', async (ctx) => {
     try {
         const user = await User.findOne({ tgId: ctx.from.id });

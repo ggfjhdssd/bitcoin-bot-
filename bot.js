@@ -51,7 +51,8 @@ const userSchema = new mongoose.Schema({
     state: { type: String, default: 'none' },
     tempData: { type: Object, default: {} },
     lastActive: { type: Date, default: Date.now },
-    hasReceivedReferralBonus: { type: Boolean, default: false }
+    hasReceivedReferralBonus: { type: Boolean, default: false },
+    isJoined: { type: Boolean, default: false }
 });
 const User = mongoose.model('User', userSchema);
 
@@ -360,13 +361,47 @@ bot.start(async (ctx) => {
             return ctx.reply("🚫 သင်သည် စည်းကမ်းဖောက်ဖျက်မှုကြောင့် အသုံးပြုခွင့် ပိတ်ပင်ခံထားရပါသည်။").catch(() => {});
         }
 
-        const msg = `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\nBOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\nအောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ \nငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\nBot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n1️⃣ @Bitcoinmyanmarmining\n2️⃣ @BitCoinMyan\n\nJoin ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\nနေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\nမြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\nBot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+        // ── isJoined status ကို Database မှ စစ်ဆေးသည် ──
+        if (user.isJoined) {
+            // ✅ Join ပြီးသား User → VPN သတိပေးစာ + ကြော်ငြာကြည့်ရန် Button
+            const miniAppUrl = `https://the-netcoinmm.vercel.app/?id=${user.tgId}`;
 
-        await ctx.reply(msg, Markup.inlineKeyboard([
-            [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/Bitcoinmyanmarmining')],
-            [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
-            [Markup.button.callback('✅ Joined', 'check_join')]
-        ])).catch(() => {});
+            const vpnMsg =
+                `📢 <b>ကြော်ငြာကြည့်ပြီး ငွေပိုရှာဖို့အတွက် သတိပြုရန်</b>\n\n` +
+                `ယခု Task ကို လုပ်ဆောင်ရန်အတွက် <b>Jump Jump VPN</b> (သို့မဟုတ်) တခြား VPN တစ်ခုခုကို အသုံးပြုပြီး <b>USA</b> သို့မဟုတ် <b>UK</b> Location ပြောင်းပေးရန် လိုအပ်ပါသည်။\n\n` +
+                `မြန်မာနိုင်ငံ Location ဖြင့် ကြည့်ပါက ကြော်ငြာတက်မည်မဟုတ်သလို Coins များလည်း ရရှိမည်မဟုတ်ပါ`;
+
+            await ctx.replyWithHTML(vpnMsg,
+                Markup.inlineKeyboard([
+                    [Markup.button.webApp('📺 ကြော်ငြာကြည့်ရန်', miniAppUrl)]
+                ])
+            ).catch(() => {});
+        } else {
+            // ❌ မ Join ရသေးသည့် User → Channel Join တောင်းဆိုသည့် စာ
+            const joinMsg =
+                `👋 မင်္ဂလာပါ ${ctx.from.first_name}\n\n` +
+                `BOT ကိုသုံးပြီးငွေရှာချင်တယ် မိတ်ဆွေ\n` +
+                `အောက်က Channel ၂ ခုလုံးကို Join ထားမှသာ\n` +
+                `ငွေထုတ်ခွင့်ရမည်ဖြစ်ပါသည်❌\n\n` +
+                `Bot ကို အသုံးပြုဖို့အတွက် အောက်ပါ Channel ၂ ခုလုံးကို join လုပ်ပါ👇\n\n` +
+                `1️⃣ @Bitcoinmyanmarmining\n` +
+                `2️⃣ @BitCoinMyan\n\n` +
+                `Join ပြီးရင် ✅ Joined ဆိုတဲ့ခလုတ်ကိုနှိပ်ပါ။\n\n` +
+                `🟡 Bitcoin ငွေရှာ BOT အသစ် 🟡🔋\n` +
+                `နေ့စဉ်ငွေရပြီး ငွေတန်းထုတ်နိုင်တယ်! 💯\n` +
+                `မြန်မာနိုင်ငံတရားဝင် Bitcoin Bot !\n\n` +
+                `🔥🎁 လူ 1 ယောက်ခေါ် → +5000ကျပ်\n` +
+                `🎁 လူ 10 ယောက်ခေါ် → +50000ကျပ်\n\n` +
+                `🔥 Start လုပ်ပြီးရင် Menu မှာ 👇\n` +
+                `👫 ဖိတ်ခေါ်ရန် 👈 ကိုနှိပ်ပါ\n` +
+                `Bot ပေးတဲ့ Link ကို သူငယ်ချင်းအခြား GP မှာတင်ပြီး ငွေရှာမယ်💸💰`;
+
+            await ctx.reply(joinMsg, Markup.inlineKeyboard([
+                [Markup.button.url('📲 Channel 1 ကို Join ပါ', 'https://t.me/Bitcoinmyanmarmining')],
+                [Markup.button.url('📲 Channel 2 ကို Join ပါ', 'https://t.me/BitCoinMyan')],
+                [Markup.button.callback('✅ Joined', 'check_join')]
+            ])).catch(() => {});
+        }
     } catch (e) {
         console.error("❌ /start error:", e);
     }
@@ -391,6 +426,12 @@ bot.action('check_join', async (ctx) => {
         if (joined) {
             const user = await User.findOne({ tgId: ctx.from.id });
             if (!user) return;
+
+            // ✅ isJoined = true ကို Database မှာ မှတ်သားသည်
+            await User.updateOne(
+                { tgId: ctx.from.id },
+                { $set: { isJoined: true } }
+            );
 
             // Referral Bonus Logic - Channel join ထားမှသာ ရမည်
             if (user.referredBy && !user.hasReceivedReferralBonus) {

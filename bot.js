@@ -195,10 +195,10 @@ app.post('/api/spin', async (req, res) => {
 app.get('/api/task-config', async (req, res) => {
     res.json({
         slots: [
-            { id: 1, title: 'ကြော်ငြာ ၁', reward: 500, blockId: 'int-29385' },
-            { id: 2, title: 'ကြော်ငြာ ၂', reward: 500, blockId: 'int-29385' },
-            { id: 3, title: 'ကြော်ငြာ ၃', reward: 500, blockId: 'int-29385' },
-            { id: 4, title: 'ကြော်ငြာ ၄', reward: 500, blockId: 'int-29385' },
+            { id: 1, title: 'ကြော်ငြာ ၁', reward: 500, blockId: 'task-31469' },
+            { id: 2, title: 'ကြော်ငြာ ၂', reward: 500, blockId: 'task-31469' },
+            { id: 3, title: 'ကြော်ငြာ ၃', reward: 500, blockId: 'task-31469' },
+            { id: 4, title: 'ကြော်ငြာ ၄', reward: 500, blockId: 'task-31469' },
         ]
     });
 });
